@@ -445,6 +445,14 @@ table.sheet, .kpi .val, .hero-num .v, .lmeta, .ci-amt, .amount{font-variant-nume
 table.sheet td .cell{white-space:nowrap}
 .field input[type=checkbox]{cursor:pointer}
 .nav-item svg{flex-shrink:0}
+/* v3.3: reporte imprimible / PDF */
+#print-area{display:none}
+@media print{
+  body{background:#fff}
+  #sidebar,#app .topbar,#modal-bg,#toast,#quick-add,#view-guide,#tour-bg,.no-print{display:none!important}
+  #app,#welcome{display:none!important}
+  #print-area{display:block!important;position:absolute;left:0;top:0;width:100%}
+}
 </style>
 
 </head>
@@ -671,9 +679,15 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.2';
+const APP_VERSION='3.3';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.3', emoji:'✨', title:'Gasto diario, salud financiera, vencimientos y PDF', items:[
+    '💸 “¿Cuánto puedo gastar hoy?”: en Este mes, la app reparte tu plata libre entre los días que faltan del mes.',
+    '⏰ Próximos vencimientos: pon el día de pago de un rubro (ej. arriendo el 5) y te avisa en Este mes lo que está por vencer.',
+    '💪 Salud financiera: un puntaje simple en Gráficas con tu tasa de ahorro, tus deudas vs ingreso y tu fondo de emergencia.',
+    '🖨️ Resumen imprimible: botón en Gráficas para imprimir o guardar como PDF un reporte limpio del año.'
+  ]},
   {v:'3.2', emoji:'🔎', title:'Buscar actualizaciones en línea', items:[
     '🔎 La app puede avisarte cuando hay una versión nueva y actualizarse con un clic — ya no hay que pasar el archivo a mano.',
     '⚙️ En Configuración → Seguridad: botón “Buscar actualizaciones” y opción “Buscar al abrir la app” (activada por defecto).',
@@ -1429,6 +1443,98 @@ function fmtPayDate(d){ if(!d)return ''; const p=String(d).split('-'); return (+
 function rubroAmount(md, r, mode){ const c=md.expenses[r.id]; if(!c)return r.def||0; const v=mode==='real'?c.real:c.budget; return v!=null?v:(c.budget!=null?c.budget:r.def||0); }
 function monthPaidTotal(mi, mode){ const md=S.year.months[mi]; let t=0; activeRubros().forEach(r=>{ if(isPaid(md,r.id)) t+=rubroAmount(md,r,mode); }); return t; }
 function monthPendingTotal(mi, mode){ const md=S.year.months[mi]; let t=0; activeRubros().forEach(r=>{ if(!isPaid(md,r.id)) t+=rubroAmount(md,r,mode); }); return t; }
+
+/* ===== v3.3: gasto diario · vencimientos · salud financiera ===== */
+// (1) Cuánto puedes gastar por día en lo que resta del mes ACTUAL (null si no es el mes en curso)
+function dailyAllowance(cm, libre){
+  if(S.config.activeYear!==todayYear() || cm!==todayMonth()) return null;
+  const dim=new Date(todayYear(), cm+1, 0).getDate();
+  const dnow=new Date().getDate();
+  const daysLeft=Math.max(1, dim-dnow+1);
+  return {daysLeft, dim, dnow, perDay: Math.floor((libre>0?libre:0)/daysLeft)};
+}
+// (3) Rubros con día de pago, aún NO pagados este mes, ordenados por cercanía (solo mes actual)
+function upcomingDues(cm){
+  if(S.config.activeYear!==todayYear() || cm!==todayMonth()) return [];
+  const md=S.year.months[cm]; const dnow=new Date().getDate();
+  const dim=new Date(todayYear(), cm+1, 0).getDate();
+  const out=[];
+  activeRubros().forEach(r=>{
+    const day=r.dueDay; if(!day) return;
+    if(isPaid(md,r.id)) return;
+    const d=Math.min(day, dim);
+    out.push({name:r.name, color:r.color, day:d, diff:d-dnow, amount:rubroAmount(md,r,'budget')});
+  });
+  return out.sort((a,b)=>a.diff-b.diff);
+}
+// (2) Salud financiera: score 0-100 con tasa de ahorro, carga de deuda y fondo de emergencia
+function financialHealth(){
+  const yr=S.config.activeYear;
+  const mesesConIng=S.year.months.filter(mm=>((mm.income&&mm.income.budget)||0)>0).length;
+  const ingAnual=S.year.months.reduce((a,mm)=>a+((mm.income&&mm.income.budget)||0),0);
+  const gasAnual=S.year.months.reduce((a,mm)=>a+monthExpenses(mm,'budget'),0);
+  const ahoAnual=S.year.months.reduce((a,mm,i)=>a+monthSavings(yr,i),0);
+  const ingMes = mesesConIng? ingAnual/mesesConIng : 0;
+  const gasMes = gasAnual/12;
+  const cuotaDeuda=S.debts.debts.filter(d=>debtPaidInterest(d).balance>1).reduce((a,d)=>a+(d.monthlyPayment||0),0);
+  const ahorrado=(S.savings.projects||[]).reduce((a,p)=>a+savedSoFar(p),0);
+  const parts=[];
+  if(ingAnual>0){ const rate=ahoAnual/ingAnual; parts.push({k:'Tasa de ahorro', v:(rate*100).toFixed(0)+'%', s:Math.max(0,Math.min(100, rate/0.20*100)), good:rate>=0.15}); }
+  if(ingMes>0){ const b=cuotaDeuda/ingMes; parts.push({k:'Deudas vs ingreso', v:(b*100).toFixed(0)+'%', s:Math.max(0,Math.min(100, 100-(b/0.36*100))), good:b<=0.30}); }
+  if(gasMes>0){ const e=ahorrado/gasMes; parts.push({k:'Fondo de emergencia', v:e.toFixed(1)+' meses', s:Math.max(0,Math.min(100, e/6*100)), good:e>=3}); }
+  if(!parts.length) return null;
+  const score=Math.round(parts.reduce((a,p)=>a+p.s,0)/parts.length);
+  const label = score>=80?'Excelente 💚' : score>=60?'Buena 🙂' : score>=40?'Regular 😐' : 'Frágil ⚠️';
+  return {score, label, parts};
+}
+// (4) Reporte imprimible (se ve solo al imprimir; window.print → "Guardar como PDF")
+function buildPrintReport(){
+  const yr=S.config.activeYear;
+  const ing=S.year.months.reduce((a,mm)=>a+((mm.income&&mm.income.budget)||0),0);
+  const extra=S.year.months.reduce((a,mm)=>a+monthExtras(mm),0);
+  const gas=S.year.months.reduce((a,mm)=>a+monthExpenses(mm,'budget'),0);
+  const aho=S.year.months.reduce((a,mm,i)=>a+monthSavings(yr,i),0);
+  const deu=S.year.months.reduce((a,mm,i)=>a+monthDebtPayments(yr,i),0);
+  const teq=ing+extra-gas-aho-deu;
+  const rubros=activeRubros().map(r=>({name:r.name,t:S.year.months.reduce((a,mm)=>a+((mm.expenses[r.id]&&mm.expenses[r.id].budget)||0),0)})).filter(x=>x.t>0).sort((a,b)=>b.t-a.t);
+  const th='style="text-align:left;padding:6px 10px;border-bottom:2px solid #000;font-size:12px"';
+  const td='style="padding:5px 10px;border-bottom:1px solid #ccc;font-size:12px"';
+  const tdr='style="padding:5px 10px;border-bottom:1px solid #ccc;font-size:12px;text-align:right"';
+  const row=(a,b)=>`<tr><td ${td}>${a}</td><td ${tdr}>${b}</td></tr>`;
+  let html=`<div style="font-family:Arial,sans-serif;color:#000;max-width:720px;margin:0 auto;padding:24px">
+    <h1 style="font-size:22px;margin:0 0 2px">Dylan Finance OS · Resumen ${yr}</h1>
+    <div style="font-size:12px;color:#555;margin-bottom:18px">Generado el ${new Date().toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'})} · ${esc(S.config.userName||'')}</div>
+    <h2 style="font-size:15px;border-bottom:2px solid #000;padding-bottom:4px">Resumen del año</h2>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:18px">
+      ${row('Ingresos (fijo)',COP(ing))}${extra>0?row('Ingresos extra',COP(extra)):''}${row('Gastos',COP(gas))}${aho>0?row('A metas de ahorro',COP(aho)):''}${deu>0?row('A deudas',COP(deu)):''}
+      <tr><td style="padding:7px 10px;font-weight:800;font-size:13px">Te queda libre en el año</td><td style="padding:7px 10px;text-align:right;font-weight:800;font-size:13px">${COP(teq)}</td></tr>
+    </table>`;
+  if(rubros.length){
+    html+=`<h2 style="font-size:15px;border-bottom:2px solid #000;padding-bottom:4px">Gastos por rubro</h2>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px"><tr><th ${th}>Rubro</th><th ${th} style="text-align:right;padding:6px 10px;border-bottom:2px solid #000;font-size:12px">Total ${yr}</th></tr>
+      ${rubros.map(r=>`<tr><td ${td}>${esc(r.name)}</td><td ${tdr}>${COP(r.t)}</td></tr>`).join('')}</table>`;
+  }
+  const metas=(S.savings.projects||[]);
+  if(metas.length){
+    html+=`<h2 style="font-size:15px;border-bottom:2px solid #000;padding-bottom:4px">Metas de ahorro</h2>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px"><tr><th ${th}>Meta</th><th ${th} style="text-align:right;padding:6px 10px;border-bottom:2px solid #000;font-size:12px">Ahorrado / Meta</th></tr>
+      ${metas.map(p=>`<tr><td ${td}>${esc(p.name)}</td><td ${tdr}>${COP(savedSoFar(p))} / ${COP(p.goal)}</td></tr>`).join('')}</table>`;
+  }
+  const deudas=(S.debts.debts||[]).filter(d=>debtPaidInterest(d).balance>1);
+  if(deudas.length){
+    html+=`<h2 style="font-size:15px;border-bottom:2px solid #000;padding-bottom:4px">Deudas pendientes</h2>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px"><tr><th ${th}>Deuda</th><th ${th} style="text-align:right;padding:6px 10px;border-bottom:2px solid #000;font-size:12px">Saldo</th></tr>
+      ${deudas.map(d=>`<tr><td ${td}>${esc(d.name)}</td><td ${tdr}>${COP(Math.round(debtPaidInterest(d).balance))}</td></tr>`).join('')}</table>`;
+  }
+  html+=`<div style="font-size:11px;color:#777;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">Reporte generado por Dylan Finance OS — cifras de presupuesto del año ${yr}.</div></div>`;
+  return html;
+}
+function printSummary(){
+  let pa=document.getElementById('print-area');
+  if(!pa){ pa=el('div'); pa.id='print-area'; document.body.appendChild(pa); }
+  pa.innerHTML=buildPrintReport();
+  try{ window.print(); }catch(e){ toast('Tu navegador no permitió abrir la impresión'); }
+}
 // Marcar aporte a meta del mes → crea/borra el registro real
 function savingsDoneThisMonth(p, yr, mi){ return (p.contributions||[]).some(c=>c.year===yr&&c.month===mi+1); }
 function toggleSavingsMonth(p, yr, mi){
@@ -1747,6 +1853,43 @@ function renderMonth(cm){
       <button class="btn sm" id="bank-btn">${md.bankBalance!=null?'Banco: '+COP(md.bankBalance):'+ Saldo en banco'}</button>
     </div>`;
   body.appendChild(hero);
+
+  // v3.3: ¿cuánto puedo gastar hoy? (solo el mes en curso)
+  const da=dailyAllowance(cm, libre);
+  if(da){
+    const dc=el('div','card'); dc.style.cssText='margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap';
+    if(libre>0){
+      dc.innerHTML=`<div style="font-size:30px">💸</div>
+        <div style="flex:1;min-width:180px">
+          <div style="font-size:13px;color:var(--text2)">Para el resto de ${MONTH_NAMES[cm]} (${da.daysLeft} día${da.daysLeft!==1?'s':''}) puedes gastar</div>
+          <div style="font-size:24px;font-weight:800" class="pos-t">${COP(da.perDay)}<span style="font-size:14px;font-weight:600;color:var(--text2)"> /día</span></div>
+        </div>
+        <div style="font-size:12.5px;color:var(--text3);max-width:230px">De tu <b>${COP(libre)}</b> libre repartido entre los días que faltan. Es una guía, no un límite. 🙂</div>`;
+    } else {
+      dc.innerHTML=`<div style="font-size:30px">🫰</div><div style="flex:1"><div style="font-size:14px" class="neg-t"><b>Este mes ya no te queda libre.</b></div><div style="font-size:12.5px;color:var(--text2)">Ojo con los gastos extra por ahora; si te entró algo, regístralo como ingreso extra 💸.</div></div>`;
+    }
+    body.appendChild(dc);
+  }
+
+  // v3.3: próximos vencimientos (rubros con día de pago aún sin pagar, mes en curso)
+  const dues=upcomingDues(cm);
+  if(dues.length){
+    const vb=el('div','card'); vb.style.marginBottom='16px';
+    const rowHtml=dues.map(d=>{
+      const estado = d.diff<0? `<span class="neg-t" style="font-weight:700">vencido hace ${-d.diff} día${-d.diff!==1?'s':''}</span>`
+        : d.diff===0? `<span class="neg-t" style="font-weight:700">¡vence hoy!</span>`
+        : d.diff<=3? `<span class="warn-t" style="font-weight:700">en ${d.diff} día${d.diff!==1?'s':''}</span>`
+        : `en ${d.diff} días`;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <span class="ci-swatch" style="background:${d.color}"></span>
+        <span style="flex:1;font-size:13.5px">${esc(d.name)}</span>
+        <span style="font-size:12.5px;color:var(--text2)">día ${d.day} · ${estado}</span>
+        <span style="font-weight:700;font-size:13px">${COP(d.amount)}</span></div>`;
+    }).join('');
+    vb.innerHTML=`<div class="card-title">⏰ Próximos vencimientos</div>${rowHtml}
+      <div class="help" style="margin-top:10px;margin-bottom:0">${icoInfo}<div>Márcalos como pagados abajo cuando los pagues. El día de pago de cada rubro se configura en <b>Rubros</b> (✏️ editar).</div></div>`;
+    body.appendChild(vb);
+  }
 
   // v2.9: cierre de mes guiado — al arrancar mes nuevo, cerrar el anterior en 1 minuto
   if(S.config.activeYear===todayYear() && cm===todayMonth() && cm>0){
@@ -3432,10 +3575,13 @@ function rubroModal(id){
       <div class="field"><label>Monto mensual por defecto</label><input id="r-def" type="text" inputmode="numeric" class="money" value="${r?r.def:''}"></div>
       <div class="field"><label>Tipo</label><select id="r-type">${['fijo','variable','suscripcion','ahorro','otro'].map(t=>`<option ${r&&r.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
       <div class="field"><label>Color</label><input id="r-color" type="color" value="${r?r.color:'#6C63FF'}" style="height:42px;padding:4px"></div>
+      <div class="field"><label>Día de pago (opcional)</label><input id="r-due" type="number" min="1" max="31" value="${r&&r.dueDay?r.dueDay:''}" placeholder="ej. 5"></div>
     </div>
+    <div class="help" style="margin-top:2px;margin-bottom:0">${icoInfo}<div>Si pones el día en que se paga (ej. el arriendo el 5), la app te lo recuerda en <b>Este mes</b> como “próximo vencimiento”.</div></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn primary" id="r-ok">Guardar</button></div>`);
   $('#r-ok').onclick=async()=>{
-    const o={name:$('#r-name').value||'Rubro',def:moneyNum($('#r-def').value)||0,type:$('#r-type').value,color:$('#r-color').value,active:true};
+    const due=parseInt($('#r-due').value,10);
+    const o={name:$('#r-name').value||'Rubro',def:moneyNum($('#r-def').value)||0,type:$('#r-type').value,color:$('#r-color').value,active:true,dueDay:(due>=1&&due<=31)?due:null};
     if(r){Object.assign(r,o);} else { o.id='r'+Date.now(); S.config.rubros.push(o);
       S.year.months.forEach(mm=>mm.expenses[o.id]={budget:o.def,real:null}); await saveYear(); }
     await saveConfig(); closeModal(); renderRubros();
@@ -3495,11 +3641,13 @@ function renderCharts(){
     <div><h1>Gráficas 📈</h1><div class="sub">Análisis visual del año ${S.config.activeYear}</div></div>
     <div class="head-actions">
       <select class="sel" id="ch-anio"></select>
+      <button class="btn" id="ch-print">🖨️ Imprimir resumen</button>
       ${S.config.years.length>1?'<button class="btn" id="ch-compare">📊 Comparar años</button>':''}
     </div>`));
   const ay=$('#ch-anio'); S.config.years.slice().sort((a,b)=>a-b).forEach(y=>{const o=el('option',null,y);o.value=y;if(y===S.config.activeYear)o.selected=true;ay.appendChild(o);});
   ay.onchange=async()=>{ S.config.activeYear=+ay.value; await saveConfig(); await loadYear(+ay.value); renderCharts(); };
   const cb=$('#ch-compare'); if(cb) cb.onclick=renderCompareYears;
+  $('#ch-print').onclick=printSummary;
 
   // v2.6: insights automáticos — lo que dicen tus números
   {
@@ -3524,6 +3672,30 @@ function renderCharts(){
         ic.innerHTML=`<div class="card-title">Lo que dicen tus números 🔍</div><div style="font-size:13.5px;line-height:2">${frases.join('<br>')}</div>`;
         m.appendChild(ic);
       }
+    }
+  }
+
+  // v3.3: salud financiera (score con tasa de ahorro, deuda y fondo de emergencia)
+  {
+    const fh=financialHealth();
+    if(fh){
+      const col = fh.score>=80?'var(--pos)':fh.score>=60?'var(--primary)':fh.score>=40?'var(--warn)':'var(--neg)';
+      const c=el('div','card'); c.style.marginBottom='16px';
+      c.innerHTML=`<div class="card-title">Salud financiera 💪</div>
+        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+          <div style="text-align:center;min-width:96px">
+            <div style="font-size:42px;font-weight:800;color:${col};line-height:1">${fh.score}<span style="font-size:17px;color:var(--text3)">/100</span></div>
+            <div style="font-size:13px;font-weight:700;color:${col}">${fh.label}</div>
+          </div>
+          <div style="flex:1;min-width:230px">
+            ${fh.parts.map(p=>`<div style="margin:8px 0">
+              <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span>${p.k}</span><span style="font-weight:700;color:${p.good?'var(--pos)':'var(--text2)'}">${p.v}</span></div>
+              <div class="progress"><div class="fill" style="width:${p.s.toFixed(0)}%;background:${p.good?'var(--pos)':(p.s<40?'var(--neg)':'var(--warn)')}"></div></div>
+            </div>`).join('')}
+          </div>
+        </div>
+        <div class="help" style="margin-top:12px;margin-bottom:0">${icoInfo}<div>Guía general: ahorra <b>15-20%+</b>, que tus <b>deudas no pasen del 30%</b> de tu ingreso y ten <b>3-6 meses</b> de gastos guardados. No es consejo financiero, solo una foto de tus números.</div></div>`;
+      m.appendChild(c);
     }
   }
 
