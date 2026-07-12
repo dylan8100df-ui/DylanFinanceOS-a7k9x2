@@ -268,6 +268,9 @@ input.inline::placeholder{color:var(--text3)}
 .month-hero.hero-neg{border-left-color:var(--neg);background:linear-gradient(90deg,var(--neg-soft),var(--surface) 30%)}
 /* tablas vivas: zebra suave, hover y filas de resumen destacadas */
 table.sheet tbody tr:nth-child(even) td{background:rgba(128,132,150,.045)}
+/* v3.5 fix: la columna Mes es sticky; su fondo DEBE ser opaco o el valor de la 1ª
+   columna se transparenta por debajo al deslizar (la zebra translúcida lo rompía) */
+table.sheet tbody tr:nth-child(even) td.mname{background:var(--surface)}
 table.sheet tbody tr:hover td{background:var(--hover)}
 table.sheet tbody tr:hover td.mname{background:var(--hover)}
 table.sheet tr.cur-month td.mname{box-shadow:inset 3px 0 0 var(--primary)}
@@ -680,9 +683,12 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.4';
+const APP_VERSION='3.5';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.5', emoji:'🩹', title:'Arreglo visual en la tabla de meses', items:[
+    '🩹 Corregido un detalle visual en la Hoja del Año: en pantallas angostas, al deslizar la tabla, el nombre del mes se encimaba con el valor de la primera columna. Ahora la columna “Mes” queda fija con fondo sólido y se lee limpia.'
+  ]},
   {v:'3.4', emoji:'🛡️', title:'Seguro en deudas, modo sencillo, más monedas y backups blindados', items:[
     '🛡️ Seguro en las deudas: ahora una deuda (consumo, vehículo, libranza, hipoteca…) también puede llevar seguro mensual, no solo las tarjetas. Se suma a la cuota del mes y a la “cuota combinada”.',
     '😌 Modo sencillo: arranca (o cambia en Configuración → Perfil) a una versión con solo lo básico; activas Inversión, Patrimonio y Renta cuando quieras.',
