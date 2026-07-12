@@ -683,9 +683,15 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.5';
+const APP_VERSION='3.6';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.6', emoji:'🧾', title:'Meses sin intereses y gracia del primer mes', items:[
+    '🧾 Compras a “meses sin intereses”: al registrar una compra diferida puedes poner cuántos meses van sin interés. Si la promo cubre todas las cuotas, no pagas ni un peso de interés.',
+    '🎁 Tarjetas con gracia: marca “no cobra el primer mes de interés” en la tarjeta y se prellena solo en cada compra nueva.',
+    '💳 También en las deudas normales: campo opcional “meses sin intereses” para créditos con periodo de gracia.',
+    '📊 La tabla de amortización lo refleja: los meses sin interés aparecen en $0 y el total de intereses baja de verdad.'
+  ]},
   {v:'3.5', emoji:'🩹', title:'Arreglo visual en la tabla de meses', items:[
     '🩹 Corregido un detalle visual en la Hoja del Año: en pantallas angostas, al deslizar la tabla, el nombre del mes se encimaba con el valor de la primera columna. Ahora la columna “Mes” queda fija con fondo sólido y se lee limpia.'
   ]},
@@ -1213,13 +1219,14 @@ function accruedInterest(bal, ratePct, months){
 // truncated (se cortó a 600 meses) y minPayment (cuota mínima para que la deuda baje).
 function amortize(debt){
   const r = monthlyRate(debt.annualRate);
+  const g = debt.sinInteres||0;                 // v3.6: meses sin intereses al inicio
   const rows=[]; let bal=debt.principal; let mi=debt.startMonth-1; let yr=debt.startYear;
   let totalInt=0; let guard=0; let insufficient=false; let truncated=false;
   const payMap={}; (debt.payments||[]).forEach(p=>payMap[p.year+'-'+p.month]=p.amount);
   while(bal>0.5){
     if(guard>=600){ truncated=true; break; }
     const key=yr+'-'+(mi+1);
-    const interest=bal*r;
+    const interest = guard<g ? 0 : bal*r;         // los primeros g meses no cobran interés
     const isReal = payMap[key]!=null;
     let pay = isReal ? payMap[key] : debt.monthlyPayment;
     if(!isReal && (pay<=0 || (r>0 && pay<=interest))){
@@ -1239,9 +1246,9 @@ function amortize(debt){
   return {rows,totalInt,months:rows.length,insufficient,truncated,remaining:Math.max(0,bal),minPayment};
 }
 function debtPaidInterest(debt){
-  const r=monthlyRate(debt.annualRate); let bal=debt.principal; let paid=0;
+  const r=monthlyRate(debt.annualRate); const g=debt.sinInteres||0; let bal=debt.principal; let paid=0;
   const sorted=[...(debt.payments||[])].sort((a,b)=> (a.year-b.year)||(a.month-b.month));
-  sorted.forEach(p=>{ const interest=bal*r; paid+=interest; let pr=p.amount-interest; if(pr>bal)pr=bal; bal-=pr; });
+  sorted.forEach((p,idx)=>{ const interest= idx<g ? 0 : bal*r; paid+=interest; let pr=p.amount-interest; if(pr>bal)pr=bal; bal-=pr; });
   return {paidInterest:paid, balance:Math.max(0,bal)};
 }
 
@@ -1261,9 +1268,9 @@ function simulateExtra(debt, extra){
    Solo cuenta hechos registrados (pagos y aportes reales), no planes. */
 // Saldo de una deuda contando solo los pagos hechos hasta (año, mes) — mismo criterio de debtPaidInterest
 function debtBalanceAt(d, y, m){
-  const r=monthlyRate(d.annualRate); let bal=d.principal;
+  const r=monthlyRate(d.annualRate); const g=d.sinInteres||0; let bal=d.principal;
   const upTo=[...(d.payments||[])].filter(p=> p.year<y || (p.year===y && p.month<=m)).sort((a,b)=>(a.year-b.year)||(a.month-b.month));
-  upTo.forEach(p=>{ const interest=bal*r; let pr=p.amount-interest; if(pr>bal)pr=bal; bal-=pr; });
+  upTo.forEach((p,idx)=>{ const interest= idx<g ? 0 : bal*r; let pr=p.amount-interest; if(pr>bal)pr=bal; bal-=pr; });
   return Math.max(0,bal);
 }
 // Ahorrado en metas hasta (año, mes): base actual + aportes registrados hasta esa fecha
@@ -2676,10 +2683,17 @@ async function ensureRubroPrestamos(){
 }
 function cardDebts(cid){ return (S.debts.debts||[]).filter(d=>d.cardId===cid); }
 // Cuota fija (sistema francés) para una compra diferida a n cuotas
-function cuotaFija(P, ratePct, n){
+// Cuota fija (sistema francés). g = meses SIN intereses al inicio (v3.6, default 0):
+// cuota constante M tal que tras g meses a 0% + (n-g) meses con interés se salda en n cuotas.
+// M = P·f / (1 + g·f) con f = r/(1-(1+r)^-(n-g)). Con g=0 es la cuota francesa de siempre.
+function cuotaFija(P, ratePct, n, g){
+  g=g||0;
   if(!(n>0)) return P;
+  if(g>=n) return Math.ceil(P/n);            // todas las cuotas sin intereses
   const r=monthlyRate(ratePct);
-  return r>0? Math.ceil(P*r/(1-Math.pow(1+r,-n))) : Math.ceil(P/n);
+  if(!(r>0)) return Math.ceil(P/n);
+  const f=r/(1-Math.pow(1+r,-(n-g)));
+  return Math.ceil(P*f/(1+g*f));
 }
 function renderDebts(){
   const m=$('#main'); m.innerHTML='';
@@ -2833,7 +2847,7 @@ function cardBlock(c){
     const fin=done?'':(am.insufficient?'—':(last?MONTH_NAMES[last.month-1].slice(0,3)+' '+last.year:'—'));
     const pagadas=(d.payments||[]).length;
     rows+=`<div class="lrow" style="padding:10px 13px;margin-bottom:6px;gap:10px;flex-wrap:wrap">
-      <span class="lname">${esc(d.name)} ${done?'<span class="tag done">Saldada</span>':`<span style="font-size:11px;color:var(--text3)">· ${pagadas}/${d.cuotas||am.months+pagadas} cuotas</span>`}</span>
+      <span class="lname">${esc(d.name)} ${done?'<span class="tag done">Saldada</span>':`<span style="font-size:11px;color:var(--text3)">· ${pagadas}/${d.cuotas||am.months+pagadas} cuotas</span>`}${d.sinInteres?`<span class="tag" style="background:var(--pos-soft);color:var(--pos);font-size:10.5px;margin-left:5px">${d.cuotas&&d.sinInteres>=d.cuotas?'sin intereses':d.sinInteres+' mes'+(d.sinInteres!==1?'es':'')+' 0%'}</span>`:''}</span>
       <span class="lmeta ${done?'pos-t':''}">${done?'$0':COP(balance)}</span>
       ${done?'':`<span style="font-size:12px;color:var(--text2)">${COP(d.monthlyPayment)}/mes · fin ${fin}</span>`}
       <span style="display:flex;gap:6px">
@@ -2882,15 +2896,16 @@ window.cardModal=(id)=>{
       <div class="field"><label>Seguro mensual <span style="color:var(--text3)">(opcional)</span></label><input id="tc-seg" type="text" inputmode="numeric" class="money" value="${c&&c.seguro?c.seguro:''}" placeholder="ej: 15.000"></div>
       <div class="field"><label>Cupo total de la tarjeta <span style="color:var(--text3)">(opcional)</span></label><input id="tc-limit" type="text" inputmode="numeric" class="money" value="${c&&c.limit?c.limit:''}" placeholder="ej: 5.000.000"></div>
     </div>
+    <div class="field" style="margin-top:2px"><label style="display:flex;align-items:center;gap:9px;font-weight:400;font-size:13px;color:var(--text2)"><input type="checkbox" id="tc-gracia" ${c&&c.graciaMes?'checked':''} style="width:18px;height:18px;accent-color:var(--primary)"> No cobra el primer mes de interés (se prellena en las compras nuevas)</label></div>
     <div id="tc-err" style="color:var(--neg);font-size:13px;font-weight:600;min-height:16px"></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn primary" id="tc-ok">Guardar</button></div>`);
   $('#tc-ok').onclick=async()=>{
-    const name=$('#tc-name').value.trim(), rate=num($('#tc-rate').value), fee=moneyNum($('#tc-fee').value)||0, seguro=moneyNum($('#tc-seg').value)||0, limit=moneyNum($('#tc-limit').value)||0;
+    const name=$('#tc-name').value.trim(), rate=num($('#tc-rate').value), fee=moneyNum($('#tc-fee').value)||0, seguro=moneyNum($('#tc-seg').value)||0, limit=moneyNum($('#tc-limit').value)||0, graciaMes=$('#tc-gracia').checked?1:0;
     const err=$('#tc-err');
     if(!name){ err.textContent='Ponle nombre a la tarjeta.'; return; }
     if(rate==null||rate<0||rate>500){ err.textContent='Revisa la tasa: entre 0 y 500% E.A.'; return; }
-    if(c){ c.name=name; c.ratePct=rate; c.fee=fee; c.seguro=seguro; c.limit=limit; cardDebts(c.id).forEach(d=>{ d.annualRate=rate; }); }
-    else cardsList().push({id:'c'+Date.now(), name, ratePct:rate, fee, seguro, limit});
+    if(c){ c.name=name; c.ratePct=rate; c.fee=fee; c.seguro=seguro; c.limit=limit; c.graciaMes=graciaMes; cardDebts(c.id).forEach(d=>{ d.annualRate=rate; }); }
+    else cardsList().push({id:'c'+Date.now(), name, ratePct:rate, fee, seguro, limit, graciaMes});
     await saveDebts(); closeModal(); renderDebts(); toast(c?'Tarjeta actualizada':'Tarjeta creada 💳');
   };
 };
@@ -2901,23 +2916,25 @@ window.purchaseModal=(cid)=>{
     <div class="form-grid">
       <div class="field"><label>Monto de la compra</label><input id="pc-amt" type="text" inputmode="numeric" class="money" placeholder="0"></div>
       <div class="field"><label># de cuotas</label><input id="pc-n" type="number" min="1" max="120" value="12"></div>
+      <div class="field"><label>Meses sin intereses <span style="color:var(--text3)">(opcional)</span></label><input id="pc-msi" type="number" min="0" max="120" value="${c.graciaMes||0}"></div>
       <div class="field"><label>Mes de la primera cuota</label><select id="pc-m">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${i===todayMonth()?'selected':''}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Año</label><input id="pc-y" type="number" value="${S.config.activeYear}" min="2020" max="2099"></div>
     </div>
     <div id="pc-hint" style="font-size:12.5px;color:var(--text2);min-height:18px;margin-bottom:6px"></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn pos" id="pc-ok">Agregar</button></div>`);
   const hint=()=>{
-    const P=moneyNum($('#pc-amt').value)||0, n=+$('#pc-n').value||0;
+    const P=moneyNum($('#pc-amt').value)||0, n=+$('#pc-n').value||0, g=Math.max(0,+($('#pc-msi').value)||0);
     const h=$('#pc-hint'); if(!h)return;
-    if(P>0&&n>0){ const q=cuotaFija(P,c.ratePct,n); h.innerHTML=`Cuota: <b>${COP(q)}/mes</b> × ${n} = ${COP(q*n)} <span style="color:var(--text3)">(${COP(q*n-P)} de intereses)</span>`; }
+    if(P>0&&n>0){ const q=cuotaFija(P,c.ratePct,n,g); const interes=Math.max(0,q*n-P);
+      h.innerHTML=`Cuota: <b>${COP(q)}/mes</b> × ${n} = ${COP(q*n)} <span style="color:var(--text3)">(${interes>0?COP(interes)+' de intereses':'sin intereses 🎉'}${g>0&&g<n?` · ${g} mes${g!==1?'es':''} sin interés`:''})</span>`; }
     else h.textContent='';
   };
-  ['pc-amt','pc-n'].forEach(i=>$('#'+i).addEventListener('input',hint)); hint();
+  ['pc-amt','pc-n','pc-msi'].forEach(i=>$('#'+i).addEventListener('input',hint)); hint();
   $('#pc-ok').onclick=async()=>{
-    const P=moneyNum($('#pc-amt').value), n=+$('#pc-n').value;
+    const P=moneyNum($('#pc-amt').value), n=+$('#pc-n').value, g=Math.max(0,+($('#pc-msi').value)||0);
     if(!P||!(n>0))return;
     S.debts.debts.push({ id:'d'+Date.now(), name:$('#pc-name').value.trim()||'Compra', principal:P,
-      annualRate:c.ratePct, monthlyPayment:cuotaFija(P,c.ratePct,n), cuotas:n, type:'tarjeta',
+      annualRate:c.ratePct, monthlyPayment:cuotaFija(P,c.ratePct,n,g), cuotas:n, sinInteres:g, type:'tarjeta',
       startMonth:+$('#pc-m').value, startYear:+$('#pc-y').value, payments:[], cardId:c.id, color:'#FF6B6B' });
     await saveDebts(); closeModal(); renderDebts(); toast('Compra registrada 💳');
   };
@@ -2928,7 +2945,7 @@ window.purchaseDetail=(id)=>{
   const am=amortize(d); const {balance,paidInterest}=debtPaidInterest(d);
   const done=balance<=1; const last=am.rows[am.rows.length-1];
   openModal(`<h2>${esc(d.name)} 📊</h2>
-    <div class="msub">cuota ${COP(d.monthlyPayment)}/mes · tasa ${d.annualRate}% E.A.${d.cuotas?' · diferida a '+d.cuotas+' cuotas':''}</div>
+    <div class="msub">cuota ${COP(d.monthlyPayment)}/mes · tasa ${d.annualRate}% E.A.${d.cuotas?' · diferida a '+d.cuotas+' cuotas':''}${d.sinInteres?' · '+(d.cuotas&&d.sinInteres>=d.cuotas?'sin intereses 🎉':d.sinInteres+' mes'+(d.sinInteres!==1?'es':'')+' sin interés'):''}</div>
     <div class="grid" style="grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0 4px">
       <div><div style="font-size:11.5px;color:var(--text2)">Saldo pendiente</div><div style="font-size:17px;font-weight:800" class="${done?'pos-t':'neg-t'}">${done?'$0 🎉':COP(balance)}</div></div>
       <div><div style="font-size:11.5px;color:var(--text2)">Intereses ya pagados</div><div style="font-size:17px;font-weight:800">${COP(Math.round(paidInterest))}</div></div>
@@ -2989,7 +3006,7 @@ function debtCard(d){
   card.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
       <div><div style="font-size:17px;font-weight:800">${esc(d.name)} ${done?'<span class="tag done" style="margin-left:6px">Saldada</span>':''}</div>
-      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.type} · tasa ${d.annualRate}% E.A. · cuota ${COP(d.monthlyPayment)}${d.seguro?' · seguro '+COP(d.seguro)+'/mes':''}${d.seguro&&!done?' · total '+COP(d.monthlyPayment+d.seguro)+'/mes':''}</div></div>
+      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.type} · tasa ${d.annualRate}% E.A. · cuota ${COP(d.monthlyPayment)}${d.sinInteres?' · '+d.sinInteres+' mes'+(d.sinInteres!==1?'es':'')+' sin interés':''}${d.seguro?' · seguro '+COP(d.seguro)+'/mes':''}${d.seguro&&!done?' · total '+COP(d.monthlyPayment+d.seguro)+'/mes':''}</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn sm" onclick="payModal('${d.id}')">+ Registrar pago</button>
         <button class="btn sm icon" onclick="debtModal('${d.id}')" title="Editar deuda">${icoEdit}</button>
@@ -3056,6 +3073,7 @@ function debtModal(id){
       <div class="field"><label>Tasa interés anual (% E.A.)</label><input id="d-rate" type="number" step="0.01" value="${d?d.annualRate:''}"></div>
       <div class="field"><label>Cuota mensual (COP)</label><input id="d-pay" type="text" inputmode="numeric" class="money" value="${d?d.monthlyPayment:''}"></div>
       <div class="field"><label>Seguro mensual <span style="color:var(--text3)">(opcional)</span></label><input id="d-seg" type="text" inputmode="numeric" class="money" value="${d&&d.seguro?d.seguro:''}" placeholder="ej: 20.000"></div>
+      <div class="field"><label>Meses sin intereses <span style="color:var(--text3)">(opcional)</span></label><input id="d-msi" type="number" min="0" max="600" value="${d&&d.sinInteres?d.sinInteres:''}" placeholder="0"></div>
       <div class="field"><label>Tipo</label><select id="d-type">${['tarjeta','consumo','hipotecario','libranza','otro'].map(t=>`<option ${d&&d.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
       <div class="field"><label>Mes inicio</label><select id="d-sm">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${d&&d.startMonth===i+1?'selected':(!d&&i===todayMonth()?'selected':'')}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Año inicio</label><input id="d-sy" type="number" value="${d?d.startYear:S.config.activeYear}"></div>
@@ -3076,7 +3094,7 @@ function debtModal(id){
   updHint();
   $('#d-ok').onclick=async()=>{
     const o={name:$('#d-name').value||'Deuda',principal:moneyNum($('#d-prin').value)||0,annualRate:num($('#d-rate').value)||0,
-      monthlyPayment:moneyNum($('#d-pay').value)||0,seguro:moneyNum($('#d-seg').value)||0,type:$('#d-type').value,startMonth:+$('#d-sm').value,startYear:+$('#d-sy').value,color:d&&d.color?d.color:'#FF6B6B'};
+      monthlyPayment:moneyNum($('#d-pay').value)||0,seguro:moneyNum($('#d-seg').value)||0,sinInteres:Math.max(0,+($('#d-msi').value)||0),type:$('#d-type').value,startMonth:+$('#d-sm').value,startYear:+$('#d-sy').value,color:d&&d.color?d.color:'#FF6B6B'};
     const err=$('#d-err');
     if(o.principal<=0){ err.textContent='El saldo / capital debe ser mayor que cero.'; return; }
     if(o.annualRate<0 || o.annualRate>500){ err.textContent='Revisa la tasa: debe estar entre 0 y 500% E.A.'; return; }

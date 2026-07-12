@@ -1,5 +1,5 @@
 {
-  "version": "3.5",
-  "notas": "Arreglo visual: la columna de meses ya no se enima con los valores en pantallas angostas",
+  "version": "3.6",
+  "notas": "Meses sin intereses en compras y gracia del primer mes en tarjetas",
   "fecha": "2026-07-12"
 }
