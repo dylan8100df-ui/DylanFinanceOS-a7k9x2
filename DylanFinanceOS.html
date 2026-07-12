@@ -526,6 +526,7 @@ table.sheet td .cell{white-space:nowrap}
           <option value="familia">👨‍👩‍👧 Con familia / hijos</option>
         </select>
       </div>
+      <div class="field" style="margin-top:2px"><label style="display:flex;align-items:center;gap:9px;font-weight:400;font-size:13px;color:var(--text2)"><input type="checkbox" id="su-simple" style="width:18px;height:18px;accent-color:var(--primary)"> 😌 Empezar en modo sencillo (solo lo básico; activas Inversión, Patrimonio y Renta cuando quieras)</label></div>
       <div class="field"><label>Correo (será tu usuario)</label><input id="su-email" type="email" placeholder="tucorreo@ejemplo.com" autocomplete="username"></div>
       <div class="form-grid">
         <div class="field"><label>Contraseña</label><input id="su-pw1" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password"></div>
@@ -679,9 +680,15 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.3';
+const APP_VERSION='3.4';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.4', emoji:'🛡️', title:'Seguro en deudas, modo sencillo, más monedas y backups blindados', items:[
+    '🛡️ Seguro en las deudas: ahora una deuda (consumo, vehículo, libranza, hipoteca…) también puede llevar seguro mensual, no solo las tarjetas. Se suma a la cuota del mes y a la “cuota combinada”.',
+    '😌 Modo sencillo: arranca (o cambia en Configuración → Perfil) a una versión con solo lo básico; activas Inversión, Patrimonio y Renta cuando quieras.',
+    '💱 Más monedas: el modo “gano en dólares” ahora es “gano en otra moneda” — elige dólares, euros, libras y más. Tus conversiones a COP siguen congelándose a la tasa del día.',
+    '💾 Backups blindados: al exportar, la app verifica que el archivo se puede volver a leer, y te avisa en Este mes si llevas mucho sin respaldar.'
+  ]},
   {v:'3.3', emoji:'✨', title:'Gasto diario, salud financiera, vencimientos y PDF', items:[
     '💸 “¿Cuánto puedo gastar hoy?”: en Este mes, la app reparte tu plata libre entre los días que faltan del mes.',
     '⏰ Próximos vencimientos: pon el día de pago de un rubro (ej. arriendo el 5) y te avisa en Este mes lo que está por vencer.',
@@ -1275,11 +1282,25 @@ function patrimonioInvertido(){
    Regla de oro: lo YA convertido queda congelado a la tasa de ese día (hecho);
    solo el saldo USD pendiente se valora a la TRM vigente (foto variable). */
 function usdCfg(){
-  if(!S.config.usd) S.config.usd={enabled:false,balance:0,trm:null,trmAt:null,conversions:[]};
+  if(!S.config.usd) S.config.usd={enabled:false,balance:0,trm:null,trmAt:null,conversions:[],currency:'USD'};
   if(!S.config.usd.conversions) S.config.usd.conversions=[];
+  if(!S.config.usd.currency) S.config.usd.currency='USD';
   return S.config.usd;
 }
 function usdOn(){ return !!(S.config && S.config.usd && S.config.usd.enabled); }
+/* v3.4: la "cuenta en el extranjero" ya no es solo dólares — soporta euros, libras, etc.
+   Mantiene la clave de almacenamiento 'usd' (aditivo: currency) para no romper datos. */
+const FX_CURRENCIES={
+  USD:{name:'dólares', sym:'US$', flag:'💵', rateLabel:'TRM (COP por USD)', canFetch:true},
+  EUR:{name:'euros', sym:'€', flag:'💶', rateLabel:'tasa (COP por EUR)', canFetch:false},
+  GBP:{name:'libras', sym:'£', flag:'💷', rateLabel:'tasa (COP por GBP)', canFetch:false},
+  CAD:{name:'dólares canadienses', sym:'C$', flag:'🍁', rateLabel:'tasa (COP por CAD)', canFetch:false},
+  MXN:{name:'pesos mexicanos', sym:'MX$', flag:'🇲🇽', rateLabel:'tasa (COP por MXN)', canFetch:false},
+  CLP:{name:'pesos chilenos', sym:'CLP$', flag:'🇨🇱', rateLabel:'tasa (COP por CLP)', canFetch:false}
+};
+function fxCode(){ return usdCfg().currency||'USD'; }
+function fx(){ const c=fxCode(); return FX_CURRENCIES[c]||{name:c, sym:c, flag:'💱', rateLabel:'tasa (COP por '+c+')', canFetch:false}; }
+function fxAmt(v){ return fxCode()+' '+Number(v||0).toLocaleString('en-US'); } // ej: "EUR 1,500"
 // Valor en COP del saldo USD a la TRM vigente (0 si falta tasa o saldo)
 function usdCop(){ const u=usdCfg(); return (u.balance>0 && u.trm>0)? Math.round(u.balance*u.trm) : 0; }
 // TRM promedio ponderada de las conversiones de un año (a cuánto convertiste de verdad)
@@ -1546,40 +1567,40 @@ function toggleSavingsMonth(p, yr, mi){
 // v2.7: registrar una conversión USD→COP (hecho congelado a la tasa de ese día)
 window.usdConvModal=(cm)=>{
   const u=usdCfg();
-  openModal(`<h2>Convertir dólares a pesos 💵→🇨🇴</h2><div class="msub">Se registra a la tasa de HOY y queda congelada: tu historial no cambia después.</div>
+  openModal(`<h2>Convertir ${fx().name} a pesos ${fx().flag}→🇨🇴</h2><div class="msub">Se registra a la tasa de HOY y queda congelada: tu historial no cambia después.</div>
     <div class="form-grid">
-      <div class="field"><label>Monto en USD</label><input id="uc-usd" type="number" step="0.01" min="0" placeholder="ej: 1000" value=""></div>
-      <div class="field"><label>Tasa (COP por USD)</label><input id="uc-trm" type="number" step="0.01" min="0" value="${u.trm||''}" placeholder="ej: 4150"></div>
+      <div class="field"><label>Monto en ${fxCode()}</label><input id="uc-usd" type="number" step="0.01" min="0" placeholder="ej: 1000" value=""></div>
+      <div class="field"><label>Tasa (COP por ${fxCode()})</label><input id="uc-trm" type="number" step="0.01" min="0" value="${u.trm||''}" placeholder="ej: 4150"></div>
       <div class="field"><label>Mes</label><select id="uc-m">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${i===(cm!=null?cm:todayMonth())?'selected':''}>${n}</option>`).join('')}</select></div>
     </div>
     <div id="uc-hint" style="font-size:12.5px;color:var(--text2);min-height:18px;margin-bottom:6px"></div>
     <div class="field"><label style="display:flex;align-items:center;gap:9px"><input type="checkbox" id="uc-extra" checked style="width:18px;height:18px;accent-color:var(--primary)"> Sumarlo como ingreso extra de ese mes</label></div>
-    <div class="field"><label style="display:flex;align-items:center;gap:9px"><input type="checkbox" id="uc-desc" checked style="width:18px;height:18px;accent-color:var(--primary)"> Descontarlo de mi cuenta USD (saldo actual: ${u.balance||0})</label></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:9px"><input type="checkbox" id="uc-desc" checked style="width:18px;height:18px;accent-color:var(--primary)"> Descontarlo de mi cuenta ${fxCode()} (saldo actual: ${u.balance||0})</label></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn pos" id="uc-ok">Registrar</button></div>`);
   const hint=()=>{ const usd=num($('#uc-usd').value)||0, trm=num($('#uc-trm').value)||0; const h=$('#uc-hint');
-    if(h) h.innerHTML=(usd>0&&trm>0)?`USD ${usd.toLocaleString('en-US')} × ${COP(trm)} = <b class="pos-t">${COP(Math.round(usd*trm))}</b>`:''; };
+    if(h) h.innerHTML=(usd>0&&trm>0)?`${fxAmt(usd)} × ${COP(trm)} = <b class="pos-t">${COP(Math.round(usd*trm))}</b>`:''; };
   ['uc-usd','uc-trm'].forEach(i=>$('#'+i).addEventListener('input',hint));
   $('#uc-ok').onclick=async()=>{
     const usd=num($('#uc-usd').value)||0, trm=num($('#uc-trm').value)||0, mes=+$('#uc-m').value;
-    if(!(usd>0)||!(trm>0)){ toast('Pon el monto en USD y la tasa'); return; }
+    if(!(usd>0)||!(trm>0)){ toast('Pon el monto en '+fxCode()+' y la tasa'); return; }
     const cop=Math.round(usd*trm);
     u.conversions.push({year:S.config.activeYear, month:mes, usd, trm, cop});
     if($('#uc-desc').checked) u.balance=Math.max(0, (u.balance||0)-usd);
     if($('#uc-extra').checked){
       const md=S.year.months[mes-1]; if(!md.extras)md.extras=[];
-      md.extras.push({label:'Conversión USD ($'+usd.toLocaleString('en-US')+' a '+COP(trm)+')', amount:cop});
+      md.extras.push({label:'Conversión '+fxAmt(usd)+' a '+COP(trm), amount:cop});
       await saveYear();
     }
     await saveConfig(); closeModal();
     if(typeof S._mesSel==='number') renderMonth(S._mesSel); else renderMonth(mes-1);
-    toast('Conversión registrada: '+COP(cop)+' 💵');
+    toast('Conversión registrada: '+COP(cop)+' '+fx().flag);
   };
 };
 /* ===== v2.7: REGISTRO RÁPIDO ⚡ (botón + flotante) =====
    Un solo modal para anotar lo del día: la app lo guarda donde corresponde. */
 window.quickAdd=(type)=>{
   const types=[['gasto','🧾 Gasto'],['extra','💸 Ingreso extra'],['meta','🎯 Aporte a meta'],['deuda','💳 Pago de deuda']];
-  if(usdOn()) types.push(['usd','💵 Conversión']);
+  if(usdOn()) types.push(['usd',fx().flag+' Conversión a COP']);
   type=type||'gasto';
   if(type==='usd'){ closeModal(); usdConvModal(todayMonth()); return; }
   const mesSel=`<div class="field"><label>Mes</label><select id="qa-m">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${i===todayMonth()?'selected':''}>${n}</option>`).join('')}</select></div>`;
@@ -1854,6 +1875,18 @@ function renderMonth(cm){
     </div>`;
   body.appendChild(hero);
 
+  // v3.4: aviso persistente de backup (imposible de ignorar sin ser bloqueante)
+  const ob=overdueBackup();
+  if(ob){
+    const bkb=el('div','card'); bkb.style.cssText='margin-bottom:16px;border-color:#FFB34766;background:var(--warn-soft);display:flex;align-items:center;gap:14px;flex-wrap:wrap';
+    bkb.innerHTML=`<div style="font-size:26px">💾</div>
+      <div style="flex:1;min-width:200px"><div style="font-weight:700">${ob.never?'Aún no has hecho ningún backup':'Hace '+ob.days+' días que no respaldas tus datos'}</div>
+      <div style="font-size:12.5px;color:var(--text2)">Si se daña el PC o se borra la carpeta, perderías tu información. Un backup toma 5 segundos y lo guardas en tu correo o nube.</div></div>
+      <button class="btn pos sm" id="dash-backup">📦 Exportar ahora</button>`;
+    body.appendChild(bkb);
+    const bb=bkb.querySelector('#dash-backup'); if(bb) bb.onclick=exportBackupZip;
+  }
+
   // v3.3: ¿cuánto puedo gastar hoy? (solo el mes en curso)
   const da=dailyAllowance(cm, libre);
   if(da){
@@ -2004,31 +2037,32 @@ function renderMonth(cm){
     const convY=u.conversions.filter(c=>c.year===S.config.activeYear);
     const usdY=convY.reduce((a,c)=>a+c.usd,0), copY=convY.reduce((a,c)=>a+c.cop,0);
     const uc=el('div','card'); uc.style.marginTop='20px';
+    const F=fx();
     uc.innerHTML=`
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-        <div class="card-title" style="margin-bottom:0">Tus dólares 💵</div>
+        <div class="card-title" style="margin-bottom:0">Tu cuenta en ${F.name} ${F.flag}</div>
         <button class="btn pos sm" id="usd-conv">+ Registrar conversión a COP</button>
       </div>
       <div class="form-grid" style="margin-top:14px">
-        <div class="field"><label>Saldo en tu cuenta USD</label><input id="usd-bal" type="number" step="0.01" min="0" value="${u.balance||''}" placeholder="ej: 1500"></div>
-        <div class="field"><label>TRM del día (COP por USD) ${u.trmAt?`<span style="color:var(--text3)">· ${esc(u.trmAt)}</span>`:''}</label>
+        <div class="field"><label>Saldo en tu cuenta ${fxCode()}</label><input id="usd-bal" type="number" step="0.01" min="0" value="${u.balance||''}" placeholder="ej: 1500"></div>
+        <div class="field"><label>${F.rateLabel} ${u.trmAt?`<span style="color:var(--text3)">· ${esc(u.trmAt)}</span>`:''}</label>
           <div style="display:flex;gap:8px"><input id="usd-trm" type="number" step="0.01" min="0" value="${u.trm||''}" placeholder="ej: 4150" style="flex:1">
-          <button class="btn sm" id="usd-fetch" title="Traer la TRM oficial de hoy (necesita internet)">↻ Hoy</button></div>
+          ${F.canFetch?`<button class="btn sm" id="usd-fetch" title="Traer la TRM oficial de hoy (necesita internet)">↻ Hoy</button>`:''}</div>
         </div>
       </div>
       <div class="grid" style="grid-template-columns:repeat(3,1fr);margin-top:6px">
-        <div><div style="font-size:11.5px;color:var(--text2)">Si conviertes hoy</div><div style="font-size:17px;font-weight:800" class="pos-t">${eq?COP(eq):'—'}</div><div style="font-size:11px;color:var(--text3)">${(u.balance>0&&u.trm>0)?('USD '+u.balance.toLocaleString('en-US')+' × '+COP(u.trm)):'pon saldo y TRM'}</div></div>
-        <div><div style="font-size:11.5px;color:var(--text2)">Convertido en ${S.config.activeYear}</div><div style="font-size:17px;font-weight:800">${copY?COP(copY):'—'}</div><div style="font-size:11px;color:var(--text3)">${usdY?('USD '+usdY.toLocaleString('en-US')+' en '+convY.length+' conversión(es)'):'aún nada'}</div></div>
-        <div><div style="font-size:11.5px;color:var(--text2)">Tu TRM promedio del año</div><div style="font-size:17px;font-weight:800" class="${avg&&u.trm? (u.trm>=avg?'pos-t':'warn-t'):''}">${avg?COP(Math.round(avg)):'—'}</div><div style="font-size:11px;color:var(--text3)">${avg&&u.trm?('hoy '+COP(u.trm)+' → '+(u.trm>=avg?'la tasa te favorece 📈':'convertiste mejor antes 📉')):'se calcula al convertir'}</div></div>
+        <div><div style="font-size:11.5px;color:var(--text2)">Si conviertes hoy</div><div style="font-size:17px;font-weight:800" class="pos-t">${eq?COP(eq):'—'}</div><div style="font-size:11px;color:var(--text3)">${(u.balance>0&&u.trm>0)?(fxAmt(u.balance)+' × '+COP(u.trm)):'pon saldo y tasa'}</div></div>
+        <div><div style="font-size:11.5px;color:var(--text2)">Convertido en ${S.config.activeYear}</div><div style="font-size:17px;font-weight:800">${copY?COP(copY):'—'}</div><div style="font-size:11px;color:var(--text3)">${usdY?(fxAmt(usdY)+' en '+convY.length+' conversión(es)'):'aún nada'}</div></div>
+        <div><div style="font-size:11.5px;color:var(--text2)">Tu tasa promedio del año</div><div style="font-size:17px;font-weight:800" class="${avg&&u.trm? (u.trm>=avg?'pos-t':'warn-t'):''}">${avg?COP(Math.round(avg)):'—'}</div><div style="font-size:11px;color:var(--text3)">${avg&&u.trm?('hoy '+COP(u.trm)+' → '+(u.trm>=avg?'la tasa te favorece 📈':'convertiste mejor antes 📉')):'se calcula al convertir'}</div></div>
       </div>
-      <div style="font-size:11.5px;color:var(--text3);margin-top:8px">Lo ya convertido queda congelado a la tasa de ese día; solo tu saldo USD se mueve con la TRM. La cuenta USD suma en tu Patrimonio Neto.</div>`;
+      <div style="font-size:11.5px;color:var(--text3);margin-top:8px">Lo ya convertido queda congelado a la tasa de ese día; solo tu saldo en ${fxCode()} se mueve con la tasa. Esta cuenta suma en tu Patrimonio Neto.</div>`;
     body.appendChild(uc);
     uc.querySelector('#usd-bal').addEventListener('change',async e=>{ u.balance=Math.max(0,num(e.target.value)||0); await saveConfig(); renderMonth(cm); });
     uc.querySelector('#usd-trm').addEventListener('change',async e=>{ u.trm=Math.max(0,num(e.target.value)||0)||null; u.trmAt=new Date().toISOString().slice(0,10); await saveConfig(); renderMonth(cm); });
-    uc.querySelector('#usd-fetch').onclick=async()=>{
-      const b=uc.querySelector('#usd-fetch'); b.disabled=true; b.textContent='…';
+    const _fb=uc.querySelector('#usd-fetch'); if(_fb) _fb.onclick=async()=>{
+      _fb.disabled=true; _fb.textContent='…';
       try{ u.trm=await fetchTRM(); u.trmAt=new Date().toISOString().slice(0,10); await saveConfig(); renderMonth(cm); toast('TRM oficial de hoy: '+COP(u.trm)); }
-      catch(e){ b.disabled=false; b.textContent='↻ Hoy'; toast('No pude traer la TRM (¿sin internet?). Escríbela a mano.'); }
+      catch(e){ _fb.disabled=false; _fb.textContent='↻ Hoy'; toast('No pude traer la TRM (¿sin internet?). Escríbela a mano.'); }
     };
     uc.querySelector('#usd-conv').onclick=()=>usdConvModal(cm);
   }
@@ -2657,11 +2691,11 @@ function renderDebts(){
 
   // consolidated summary (incluye compras de tarjeta: son deudas)
   let totalBal=0,totalCuota=0;
-  S.debts.debts.forEach(d=>{ const {balance}=debtPaidInterest(d); totalBal+=balance; if(balance>1)totalCuota+=d.monthlyPayment; });
+  S.debts.debts.forEach(d=>{ const {balance}=debtPaidInterest(d); totalBal+=balance; if(balance>1)totalCuota+=d.monthlyPayment+(d.seguro||0); });
   cards.forEach(c=>{ if(((c.fee||0)+(c.seguro||0))>0 && cardDebts(c.id).some(d=>debtPaidInterest(d).balance>1)) totalCuota+=(c.fee||0)+(c.seguro||0); });
   const sum=el('div','kpi-row');
   sum.innerHTML=`${kpi('Deuda total pendiente',COP(totalBal),totalBal<=1?'¡Libre!':'Por pagar',totalBal<=1?'pos':'neg',icoCard)}
-    ${kpi('Cuota mensual combinada',COP(totalCuota),cards.some(c=>c.fee)?'incluye cuotas de manejo':'Afecta tu sobrante','warn',icoMoney)}
+    ${kpi('Cuota mensual combinada',COP(totalCuota),(cards.some(c=>c.fee||c.seguro)||S.debts.debts.some(d=>d.seguro))?'incluye manejo y seguros':'Afecta tu sobrante','warn',icoMoney)}
     ${kpi('Deudas activas',String(S.debts.debts.filter(d=>debtPaidInterest(d).balance>1).length),'de '+S.debts.debts.length+' totales','pri',icoList)}`;
   m.appendChild(sum);
 
@@ -2949,7 +2983,7 @@ function debtCard(d){
   card.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
       <div><div style="font-size:17px;font-weight:800">${esc(d.name)} ${done?'<span class="tag done" style="margin-left:6px">Saldada</span>':''}</div>
-      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.type} · tasa ${d.annualRate}% E.A. · cuota ${COP(d.monthlyPayment)}</div></div>
+      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.type} · tasa ${d.annualRate}% E.A. · cuota ${COP(d.monthlyPayment)}${d.seguro?' · seguro '+COP(d.seguro)+'/mes':''}${d.seguro&&!done?' · total '+COP(d.monthlyPayment+d.seguro)+'/mes':''}</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn sm" onclick="payModal('${d.id}')">+ Registrar pago</button>
         <button class="btn sm icon" onclick="debtModal('${d.id}')" title="Editar deuda">${icoEdit}</button>
@@ -3015,6 +3049,7 @@ function debtModal(id){
       <div class="field"><label>Saldo / capital (COP)</label><input id="d-prin" type="text" inputmode="numeric" class="money" value="${d?d.principal:''}"></div>
       <div class="field"><label>Tasa interés anual (% E.A.)</label><input id="d-rate" type="number" step="0.01" value="${d?d.annualRate:''}"></div>
       <div class="field"><label>Cuota mensual (COP)</label><input id="d-pay" type="text" inputmode="numeric" class="money" value="${d?d.monthlyPayment:''}"></div>
+      <div class="field"><label>Seguro mensual <span style="color:var(--text3)">(opcional)</span></label><input id="d-seg" type="text" inputmode="numeric" class="money" value="${d&&d.seguro?d.seguro:''}" placeholder="ej: 20.000"></div>
       <div class="field"><label>Tipo</label><select id="d-type">${['tarjeta','consumo','hipotecario','libranza','otro'].map(t=>`<option ${d&&d.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
       <div class="field"><label>Mes inicio</label><select id="d-sm">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${d&&d.startMonth===i+1?'selected':(!d&&i===todayMonth()?'selected':'')}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Año inicio</label><input id="d-sy" type="number" value="${d?d.startYear:S.config.activeYear}"></div>
@@ -3035,7 +3070,7 @@ function debtModal(id){
   updHint();
   $('#d-ok').onclick=async()=>{
     const o={name:$('#d-name').value||'Deuda',principal:moneyNum($('#d-prin').value)||0,annualRate:num($('#d-rate').value)||0,
-      monthlyPayment:moneyNum($('#d-pay').value)||0,type:$('#d-type').value,startMonth:+$('#d-sm').value,startYear:+$('#d-sy').value,color:d&&d.color?d.color:'#FF6B6B'};
+      monthlyPayment:moneyNum($('#d-pay').value)||0,seguro:moneyNum($('#d-seg').value)||0,type:$('#d-type').value,startMonth:+$('#d-sm').value,startYear:+$('#d-sy').value,color:d&&d.color?d.color:'#FF6B6B'};
     const err=$('#d-err');
     if(o.principal<=0){ err.textContent='El saldo / capital debe ser mayor que cero.'; return; }
     if(o.annualRate<0 || o.annualRate>500){ err.textContent='Revisa la tasa: debe estar entre 0 y 500% E.A.'; return; }
@@ -3249,7 +3284,7 @@ function renderPatrimonio(){
       ${row('🏦 Saldo en banco', P.banco!=null?COP(P.banco):'— sin registrar', P.banco!=null?'':'', P.bancoIdx>=0?('registrado en '+MONTH_NAMES[P.bancoIdx]):'regístralo en “Este mes”')}
       ${row('🎯 Ahorrado en metas', COP(P.metas),'pri-t',(S.savings.projects||[]).length+' proyecto(s)')}
       ${row('🌱 Capital invertido', COP(P.invertido),'pri-t','de la vista Inversión')}
-      ${usdOn()?row('💵 Cuenta en dólares', COP(P.usd), P.usd?'pri-t':'', usdCfg().trm?('USD '+usdCfg().balance.toLocaleString('en-US')+' a TRM '+COP(usdCfg().trm)):'configura la TRM en Este mes'):''}
+      ${usdOn()?row(fx().flag+' Cuenta en '+fx().name, COP(P.usd), P.usd?'pri-t':'', usdCfg().trm?(fxAmt(usdCfg().balance)+' a '+COP(usdCfg().trm)):'configura la tasa en Este mes'):''}
       ${P.prestamos>0?row('🤝 Préstamos por cobrar', COP(P.prestamos),'pri-t',(S.debts.loans||[]).length+' préstamo(s)'):''}
       ${row('💳 − Deudas pendientes', '−'+COP(P.deudas),'neg-t','')}
       ${row('<b>= Patrimonio neto</b>', '<b>'+COP(P.neto)+'</b>', P.neto>=0?'pos-t':'neg-t','')}
@@ -3863,17 +3898,28 @@ function setTabPerfil(m){
       <div class="field"><label>Nombre</label><input id="set-name" value="${esc(S.config.userName)}"></div>
       <div class="field"><label>Moneda</label><input id="set-cur" value="${S.config.currency}"></div>
     </div>
-    <div class="field" style="margin-top:4px"><label style="display:flex;align-items:center;gap:9px"><input type="checkbox" id="set-usd" ${usdOn()?'checked':''} style="width:18px;height:18px;accent-color:var(--primary)"> 💵 Gano en dólares (activa la tarjeta de conversiones y cuenta USD)</label></div>
+    <div class="field" style="margin-top:4px"><label style="display:flex;align-items:center;gap:9px"><input type="checkbox" id="set-usd" ${usdOn()?'checked':''} style="width:18px;height:18px;accent-color:var(--primary)"> 💱 Gano en otra moneda (dólares, euros…) — activa tu cuenta y las conversiones a COP</label></div>
+    <div class="field" id="set-fx-wrap" style="margin-top:2px;${usdOn()?'':'display:none'}"><label>¿En qué moneda te pagan?</label>
+      <select id="set-fx-cur">${Object.keys(FX_CURRENCIES).map(c=>`<option value="${c}" ${fxCode()===c?'selected':''}>${FX_CURRENCIES[c].flag} ${c} · ${FX_CURRENCIES[c].name}</option>`).join('')}</select></div>
     <button class="btn primary sm" id="set-save">Guardar perfil</button>`;
   m.appendChild(c);
-  $('#set-usd').onchange=async e=>{ usdCfg().enabled=e.target.checked; await saveConfig(); toast(e.target.checked?'💵 Modo dólares activo: mira la tarjeta "Tus dólares" en Este mes':'Modo dólares desactivado (tus conversiones quedan guardadas)'); };
+  $('#set-usd').onchange=async e=>{ usdCfg().enabled=e.target.checked; await saveConfig(); const w=$('#set-fx-wrap'); if(w) w.style.display=e.target.checked?'':'none'; toast(e.target.checked?(fx().flag+' Modo '+fx().name+' activo: mira tu cuenta en Este mes'):'Modo moneda extranjera desactivado (tus conversiones quedan guardadas)'); };
+  { const fxSel=$('#set-fx-cur'); if(fxSel) fxSel.onchange=async e=>{ usdCfg().currency=e.target.value; await saveConfig(); toast('Moneda: '+fx().name+' '+fx().flag); }; }
   $('#set-save').onclick=async()=>{ S.config.userName=$('#set-name').value; S.config.currency=$('#set-cur').value; await saveConfig(); $('#brand-user').textContent=S.config.userName; toast('Perfil guardado'); };
   // v2.8: funcionalidades opcionales — apaga las vistas que no uses
   const fc=el('div','card'); fc.style.marginTop='16px';
   fc.innerHTML=`<div class="card-title">Funcionalidades ✨</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:12px">Apaga las vistas que no uses: desaparecen del menú, pero <b>tus datos no se tocan</b> — al prenderlas de nuevo todo sigue ahí.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn sm" id="fv-simple" title="Deja solo lo básico">😌 Modo sencillo</button>
+      <button class="btn sm" id="fv-full" title="Activa todas las vistas">🔧 Modo completo</button>
+    </div>
     ${OPTIONAL_VIEWS.map(([v,l])=>`<div class="field" style="margin-bottom:8px"><label style="display:flex;align-items:center;gap:9px"><input type="checkbox" data-fv="${v}" ${viewHidden(v)?'':'checked'} style="width:18px;height:18px;accent-color:var(--primary)"> ${l}</label></div>`).join('')}`;
   m.appendChild(fc);
+  { const bs=$('#fv-simple'), bf=$('#fv-full');
+    if(bs) bs.onclick=async()=>{ S.config.hiddenViews=OPTIONAL_VIEWS.map(v=>v[0]); await saveConfig(); applyHiddenViews(); toast('😌 Listo: te dejé solo lo básico'); renderSettings(); };
+    if(bf) bf.onclick=async()=>{ S.config.hiddenViews=[]; await saveConfig(); applyHiddenViews(); toast('🔧 Todo activado ✨'); renderSettings(); };
+  }
   fc.querySelectorAll('[data-fv]').forEach(ch=> ch.onchange=async()=>{
     const v=ch.dataset.fv;
     if(!S.config.hiddenViews) S.config.hiddenViews=[];
@@ -4061,9 +4107,13 @@ async function autoFolderBackup(){
 }
 async function exportBackup(){
   const all=await buildBackupObject();
-  download(JSON.stringify(all,null,2),'DylanFinanceOS_backup_'+Date.now()+'.json','application/json');
+  const txt=JSON.stringify(all,null,2);
+  // v3.4: verificar que el backup se puede VOLVER A LEER antes de darlo por bueno
+  try{ const chk=JSON.parse(txt); if(!chk||!chk.config||!Array.isArray(chk.config.years)) throw 0; }
+  catch(e){ toast('⚠️ No pude generar un backup válido. Intenta de nuevo.'); return; }
+  download(txt,'DylanFinanceOS_backup_'+Date.now()+'.json','application/json');
   S.config.lastBackupAt=new Date().toISOString(); await saveConfig(); // para el recordatorio de 30 días
-  toast('Backup de datos (.json) exportado ('+S.config.years.length+(S.config.years.length===1?' año)':' años)'));
+  toast('✓ Backup de datos verificado y exportado ('+S.config.years.length+(S.config.years.length===1?' año)':' años)'));
 }
 
 /* ===== v3.2: ZIP mínimo (método STORE, sin dependencias) para el backup
@@ -4119,9 +4169,13 @@ async function exportBackupZip(){
       }
     }
   }
-  download(zipBuild(entries),'DylanFinanceOS_backup_completo_'+Date.now()+'.zip','application/zip');
+  const zipBytes=zipBuild(entries);
+  // v3.4: verificar integridad — re-abrir el .zip y confirmar que backup.json y TODAS las imágenes están completos
+  try{ const back=zipParse(zipBytes); if(!back['backup.json']) throw 0; JSON.parse(new TextDecoder().decode(back['backup.json'])); if(Object.keys(back).length!==entries.length) throw 0; }
+  catch(e){ toast('⚠️ El backup .zip no pasó la verificación. Intenta de nuevo.'); return; }
+  download(zipBytes,'DylanFinanceOS_backup_completo_'+Date.now()+'.zip','application/zip');
   S.config.lastBackupAt=new Date().toISOString(); await saveConfig();
-  toast('Backup completo (.zip) exportado · '+imgCount+' comprobante(s) incluido(s)');
+  toast('✓ Backup completo verificado · '+imgCount+' comprobante(s) · exportado');
 }
 // Restaura los datos de un objeto de backup (compartido por .json y .zip).
 // Lanza {kind:'enc'|'bad'} para que quien llama muestre el aviso correcto.
@@ -4223,12 +4277,12 @@ async function exportExcel(){
     const wsL=XLSX.utils.aoa_to_sheet(lr); wsL['!cols']=lr[0].map(()=>({wch:15}));
     XLSX.utils.book_append_sheet(wb,wsL,'Préstamos');
   }
-  // Conversiones de dólares (v2.7)
+  // Conversiones de moneda extranjera (v2.7 · generalizado en v3.4)
   if(usdOn() && usdCfg().conversions.length){
-    const ur=[['Mes','Año','USD','Tasa','COP recibidos']];
+    const ur=[['Mes','Año',fxCode(),'Tasa','COP recibidos']];
     usdCfg().conversions.slice().sort((a,b)=>(a.year-b.year)||(a.month-b.month)).forEach(c=>ur.push([MONTH_NAMES[c.month-1], c.year, c.usd, c.trm, c.cop]));
     const wsU=XLSX.utils.aoa_to_sheet(ur); wsU['!cols']=[{wch:12},{wch:7},{wch:11},{wch:10},{wch:14}];
-    XLSX.utils.book_append_sheet(wb,wsU,'Dólares');
+    XLSX.utils.book_append_sheet(wb,wsU,fx().name.charAt(0).toUpperCase()+fx().name.slice(1));
   }
   // Aportes reales de inversión (v2.4)
   if(investContribs().length){
@@ -4571,6 +4625,7 @@ function showSetup(){
       await bootData();
       if(name){ S.config.userName=name; await saveConfig(); }
       const tplSel=$('#su-tpl'); if(tplSel && tplSel.value!=='base') await applyRubroTemplate(tplSel.value);
+      if($('#su-simple') && $('#su-simple').checked){ S.config.hiddenViews=OPTIONAL_VIEWS.map(v=>v[0]); await saveConfig(); }
       const codes=await setupPassword(email, p1);
       s.classList.add('hide');
       codesModal(codes,{onDone:()=>{ startApp(); toast('¡Bienvenido'+(name?', '+name:'')+'! 💜 Todo quedó cifrado.'); }});
@@ -4632,7 +4687,20 @@ function backupDaysAgo(){
   const t=Date.parse(S.config.lastBackupAt); if(isNaN(t)) return null;
   return Math.floor((Date.now()-t)/86400000);
 }
+// v3.4: ¿toca respaldar? Solo si hay datos reales que perder (no en modo ejemplo).
+function overdueBackup(){
+  if(!S.config || Store.backend==='demo') return null;
+  const hasData=(S.year&&S.year.months&&S.year.months.some(m=>((m.income&&m.income.budget)||0)>0))
+    || (S.savings&&S.savings.projects&&S.savings.projects.length)
+    || (S.debts&&S.debts.debts&&S.debts.debts.length);
+  if(!hasData) return null;
+  const days=backupDaysAgo();
+  if(days==null) return {never:true, days:null};
+  if(days>=30) return {never:false, days};
+  return null;
+}
 function backupReminder(){
+  if(Store.backend==='demo') return; // en modo ejemplo no hay nada que respaldar
   const days=backupDaysAgo();
   if(days!=null && days<30) return;
   setTimeout(()=>toast(days==null
