@@ -699,9 +699,14 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.10';
+const APP_VERSION='4.0';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'4.0', emoji:'🎉', title:'Versión 4 — historial de novedades más limpio', items:[
+    '🎉 ¡Llegamos a la v4! De aquí en adelante, en Configuración verás en detalle solo las novedades de la versión 4 (4.0, 4.1, 4.2…).',
+    '📚 Las versiones viejas (v2 y v3) se agrupan en un chip de “resumen” para no llenar la pantalla de botones: tócalo, ves la lista y puedes abrir el detalle de cualquiera.',
+    '🔮 Cuando salga la v5, la v4 se resumirá igual, solita.'
+  ]},
   {v:'3.10', emoji:'✅', title:'Marcar pagado cuenta como gasto real, y modal más cómodo', items:[
     '✅ Al marcar un rubro como pagado en Este mes, ahora se registra automáticamente como gasto real (con el valor del presupuesto). Si lo desmarcas, se deshace.',
     '🐜 Al agregar un gasto, la fecha ya viene puesta con la de hoy (y puedes cambiarla).',
@@ -4180,16 +4185,35 @@ async function renderCompareYears(){
 /* =========================================================
    VIEW: CONFIGURACIÓN
    ========================================================= */
+/* v4.0: Novedades — solo el major ACTUAL se ve versión por versión; los majors
+   viejos se colapsan en un chip "vN · resumen" (auto-aplica al llegar cada major). */
+function changelogChips(){
+  const cur=parseInt(APP_VERSION,10);
+  const curEntries=CHANGELOG.filter(c=>parseInt(c.v,10)===cur);
+  const olderMajors=[...new Set(CHANGELOG.filter(c=>parseInt(c.v,10)!==cur).map(c=>parseInt(c.v,10)))].sort((a,b)=>b-a);
+  return curEntries.map(c=>`<button class="btn sm" data-clv="${c.v}" title="Novedades de la v${c.v}">v${c.v}${c.v===APP_VERSION?' · actual':''}</button>`).join('')
+    + olderMajors.map(mj=>`<button class="btn sm" data-csum="${mj}" title="Resumen de todas las novedades de la v${mj}">v${mj} · resumen</button>`).join('');
+}
+function changelogVersionModal(v){
+  const c=CHANGELOG.find(x=>x.v===v); if(!c)return;
+  openModal(`<h2>Versión ${c.v} ${c.emoji||''}</h2><div class="msub">${c.title}</div>
+    <div style="font-size:13.5px;line-height:1.7">${c.items.map(i=>'<div style="display:flex;gap:9px;margin:7px 0"><span>'+i.slice(0,i.indexOf(' '))+'</span><span>'+esc(i.slice(i.indexOf(' ')+1))+'</span></div>').join('')}</div>
+    <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Entendido</button></div>`);
+}
+function changelogMajorModal(major){
+  const entries=CHANGELOG.filter(c=>parseInt(c.v,10)===major);
+  openModal(`<h2>Novedades de la v${major} · resumen ${entries[0]?entries[0].emoji:''}</h2>
+    <div class="msub">Todo lo que llegó en la versión ${major}, de lo más nuevo a lo más viejo. Toca una para ver su detalle.</div>
+    ${entries.map(c=>`<div class="lrow" data-clv2="${c.v}" style="cursor:pointer;padding:11px 13px;margin-bottom:6px"><span class="lname">${c.emoji||''} v${c.v} · ${esc(c.title)}</span><span class="lmeta">ver ›</span></div>`).join('')}
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cerrar</button></div>`,{wide:true});
+  document.querySelectorAll('[data-clv2]').forEach(b=>b.onclick=()=>changelogVersionModal(b.dataset.clv2));
+}
 function renderSettings(){
   const m=$('#main'); m.innerHTML='';
   m.appendChild(el('div','page-head',`<div><h1>Configuración ⚙️</h1><div class="sub">Perfil, seguridad, backup y notas — todo en su lugar</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px">${CHANGELOG.map(c=>`<button class="btn sm" data-clv="${c.v}" title="Novedades de la versión ${c.v}">v${c.v}${c.v===APP_VERSION?' · actual':''}</button>`).join('')}</div></div>`));
-  m.querySelectorAll('[data-clv]').forEach(b=> b.onclick=()=>{
-    const c=CHANGELOG.find(x=>x.v===b.dataset.clv);
-    openModal(`<h2>Versión ${c.v} ${c.emoji||''}</h2><div class="msub">${c.title}</div>
-      <div style="font-size:13.5px;line-height:1.7">${c.items.map(i=>'<div style="display:flex;gap:9px;margin:7px 0"><span>'+i.slice(0,i.indexOf(' '))+'</span><span>'+esc(i.slice(i.indexOf(' ')+1))+'</span></div>').join('')}</div>
-      <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Entendido</button></div>`);
-  });
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px">${changelogChips()}</div></div>`));
+  m.querySelectorAll('[data-clv]').forEach(b=> b.onclick=()=>changelogVersionModal(b.dataset.clv));
+  m.querySelectorAll('[data-csum]').forEach(b=> b.onclick=()=>changelogMajorModal(+b.dataset.csum));
 
   // v2.5: secciones organizadas en pestañas
   if(!S._setTab) S._setTab='perfil';
@@ -4720,7 +4744,7 @@ const VIEW_TOURS={
     {sel:'.chart-card',t:'Explora',p:'Ingresos vs gastos, acumulado, dona por rubro, ahorro y deudas — y “¿en qué se te va la plata?” con tus gastos hormiga. Arriba puedes comparar años completos.'}],
   settings:[
     {sel:'[data-stab="perfil"]',t:'Configuración ⚙️',p:'Todo organizado en pestañas: Perfil, Seguridad y backup, Notas del año y la Guía.'},
-    {sel:'[data-clv]',t:'Novedades',p:'Estos chips abren el parche de cada versión: qué llegó nuevo y cuándo.'},
+    {sel:'[data-clv]',t:'Novedades',p:'Estos chips abren lo nuevo de cada versión. La versión actual se ve una por una; las viejas se agrupan en un chip “resumen” para no llenar la pantalla.'},
     {sel:'[data-stab="seguridad"]',t:'Lo importante 💾',p:'En Seguridad y backup vive la contraseña (cifrado real) y el backup. Exporta seguido: es tu red de seguridad.'}]
 };
 let _tourList=TOUR_STEPS;

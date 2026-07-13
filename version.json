@@ -1,5 +1,5 @@
 {
-  "version": "3.10",
-  "notas": "Marcar pagado cuenta como gasto real, fecha de hoy automática y modal de gastos más cómodo",
-  "fecha": "2026-07-12"
+  "version": "4.0",
+  "notas": "¡Versión 4! Las novedades viejas (v2, v3) se agrupan en un resumen para no llenar la pantalla",
+  "fecha": "2026-07-13"
 }
