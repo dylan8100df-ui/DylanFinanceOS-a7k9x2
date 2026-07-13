@@ -1,5 +1,5 @@
 {
-  "version": "4.0",
-  "notas": "¡Versión 4! Las novedades viejas (v2, v3) se agrupan en un resumen para no llenar la pantalla",
+  "version": "4.1",
+  "notas": "Fecha de corte y pago de la tarjeta: la primera cuota se calcula sola. Día de pago en deudas.",
   "fecha": "2026-07-13"
 }

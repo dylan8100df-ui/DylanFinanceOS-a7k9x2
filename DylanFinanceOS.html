@@ -699,9 +699,15 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='4.0';
+const APP_VERSION='4.1';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'4.1', emoji:'💳', title:'Fecha de corte y pago de la tarjeta (y día de pago en deudas)', items:[
+    '💳 Ponle a tu tarjeta su día de corte y su día de pago. Al registrar una compra, la app calcula sola en qué mes empieza la primera cuota según la fecha en que compraste.',
+    '🗓️ Ejemplo: si tu corte es el 15 y compras el 20, esa compra “se pasa” al siguiente corte y la primera cuota cae un mes después — sin que tengas que pensarlo (igual lo puedes ajustar).',
+    '⏰ Día de pago en deudas: ponle a una deuda su día de pago del mes y te avisa en Este mes cuando esté por vencer.',
+    'ℹ️ En cada rubro, una nota aclara las dos formas de registrar el gasto: marcar pagado (usa el presupuesto) o anotar tus pagos (el rubro se vuelve un cupo). No se suman entre sí.'
+  ]},
   {v:'4.0', emoji:'🎉', title:'Versión 4 — historial de novedades más limpio', items:[
     '🎉 ¡Llegamos a la v4! De aquí en adelante, en Configuración verás en detalle solo las novedades de la versión 4 (4.0, 4.1, 4.2…).',
     '📚 Las versiones viejas (v2 y v3) se agrupan en un chip de “resumen” para no llenar la pantalla de botones: tócalo, ves la lista y puedes abrir el detalle de cualquiera.',
@@ -1547,6 +1553,14 @@ function upcomingDues(cm){
     const d=Math.min(day, dim);
     out.push({name:r.name, color:r.color, day:d, diff:d-dnow, amount:rubroAmount(md,r,'budget')});
   });
+  // v4.1: deudas con día de pago que aún no se pagan este mes
+  (S.debts.debts||[]).forEach(dt=>{
+    const day=dt.dueDay; if(!day) return;
+    if(debtPaidInterest(dt).balance<=1) return;              // ya saldada
+    if(debtDoneThisMonth(dt, todayYear(), cm)) return;       // ya pagada este mes
+    const d=Math.min(day, dim);
+    out.push({name:'Cuota · '+dt.name, color:dt.color||'#FF6B6B', day:d, diff:d-dnow, amount:dt.monthlyPayment||0});
+  });
   return out.sort((a,b)=>a.diff-b.diff);
 }
 // (2) Salud financiera: score 0-100 con tasa de ahorro, carga de deuda y fondo de emergencia
@@ -1932,6 +1946,7 @@ window.rubroPagosModal=(cm, rid)=>{
   }
   openModal(`<h2>${esc(r?r.name:'Rubro')} · ${MONTH_NAMES[cm]} 🧾</h2>
     <div class="msub">Anota cada gasto (café, mercado, arriendo...) y, si quieres, adjúntale su comprobante. La suma es tu gasto real del rubro${Crypto.key?' · 🔐 cifrado':''}.</div>
+    <div class="help" style="margin:2px 0 12px">${icoInfo}<div><b>Dos formas de llevar este rubro (elige una):</b><br>• <b>Simple:</b> marca el rubro como <b>pagado</b> en Este mes y se registra el valor del presupuesto como tu gasto real.<br>• <b>Detallado:</b> anota tus <b>pagos</b> aquí — el rubro se vuelve un <b>cupo</b> y la suma de los pagos es tu gasto real.<br>El check y los pagos <b>no se suman entre sí</b>: si registras pagos, ellos mandan.</div></div>
     ${bar}
     <div class="field"><label>Fecha en que pagaste <span style="color:var(--text3)">(opcional)</span></label><input id="pdt-date" type="date" value="${payAt}"></div>
     <div class="section-label">Gastos (${items.length})${items.length?' · '+COP(items.reduce((s,p)=>s+(p.amount||0),0)):''}</div>
@@ -2887,6 +2902,17 @@ function cardDebts(cid){ return (S.debts.debts||[]).filter(d=>d.cardId===cid); }
 // Cuota fija (sistema francés). g = meses SIN intereses al inicio (v3.6, default 0):
 // cuota constante M tal que tras g meses a 0% + (n-g) meses con interés se salda en n cuotas.
 // M = P·f / (1 + g·f) con f = r/(1-(1+r)^-(n-g)). Con g=0 es la cuota francesa de siempre.
+// v4.1: mes de la primera cuota de una compra según fecha de compra + corte/pago de la tarjeta.
+// Decisión (Dylan): la 1ª cuota = el mes en que se PAGA ese corte.
+// - si compras después del corte, la compra entra al corte del mes siguiente;
+// - el pago de un corte vence el mes siguiente al cierre, salvo que el día de pago sea > día de corte.
+function primeraCuota(dateStr, corteDay, pagoDay){
+  const d=new Date(dateStr+'T00:00:00'); if(isNaN(d.getTime()) || !(corteDay>0)) return null;
+  let m=d.getMonth(), y=d.getFullYear();
+  if(d.getDate()>corteDay){ m++; if(m>11){m=0;y++;} }
+  if(!(pagoDay>corteDay)){ m++; if(m>11){m=0;y++;} }
+  return {month:m+1, year:y};
+}
 function cuotaFija(P, ratePct, n, g){
   g=g||0;
   if(!(n>0)) return P;
@@ -3060,7 +3086,7 @@ function cardBlock(c){
   card.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
       <div><div style="font-size:17px;font-weight:800">💳 ${esc(c.name)}</div>
-      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">tarjeta · tasa ${c.ratePct}% E.A.${c.fee?' · manejo '+COP(c.fee)+'/mes':''}${c.seguro?' · seguro '+COP(c.seguro)+'/mes':''}</div></div>
+      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">tarjeta · tasa ${c.ratePct}% E.A.${c.fee?' · manejo '+COP(c.fee)+'/mes':''}${c.seguro?' · seguro '+COP(c.seguro)+'/mes':''}${c.fechaCorte?' · corte día '+c.fechaCorte:''}${c.fechaPago?' · pago día '+c.fechaPago:''}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn pos sm" onclick="purchaseModal('${c.id}')">+ Compra diferida</button>
         <button class="btn sm icon" onclick="cardModal('${c.id}')" title="Editar tarjeta">${icoEdit}</button>
@@ -3096,47 +3122,66 @@ window.cardModal=(id)=>{
       <div class="field"><label>Cuota de manejo mensual <span style="color:var(--text3)">(opcional)</span></label><input id="tc-fee" type="text" inputmode="numeric" class="money" value="${c&&c.fee?c.fee:''}" placeholder="0"></div>
       <div class="field"><label>Seguro mensual <span style="color:var(--text3)">(opcional)</span></label><input id="tc-seg" type="text" inputmode="numeric" class="money" value="${c&&c.seguro?c.seguro:''}" placeholder="ej: 15.000"></div>
       <div class="field"><label>Cupo total de la tarjeta <span style="color:var(--text3)">(opcional)</span></label><input id="tc-limit" type="text" inputmode="numeric" class="money" value="${c&&c.limit?c.limit:''}" placeholder="ej: 5.000.000"></div>
+      <div class="field"><label>Día de corte <span style="color:var(--text3)">(opcional)</span></label><input id="tc-corte" type="number" min="1" max="31" value="${c&&c.fechaCorte?c.fechaCorte:''}" placeholder="ej: 15"></div>
+      <div class="field"><label>Día límite de pago <span style="color:var(--text3)">(opcional)</span></label><input id="tc-pago" type="number" min="1" max="31" value="${c&&c.fechaPago?c.fechaPago:''}" placeholder="ej: 5"></div>
     </div>
-    <div class="field" style="margin-top:2px"><label style="display:flex;align-items:center;gap:9px;font-weight:400;font-size:13px;color:var(--text2)"><input type="checkbox" id="tc-gracia" ${c&&c.graciaMes?'checked':''} style="width:18px;height:18px;accent-color:var(--primary)"> No cobra el primer mes de interés (se prellena en las compras nuevas)</label></div>
+    <div class="help" style="margin:6px 0 0">${icoInfo}<div>El <b>día de corte</b> y el <b>día de pago</b> son opcionales: si los pones, al registrar una compra la app calcula sola en qué mes empieza la primera cuota (según la fecha en que compraste).</div></div>
+    <div class="field" style="margin-top:8px"><label style="display:flex;align-items:center;gap:9px;font-weight:400;font-size:13px;color:var(--text2)"><input type="checkbox" id="tc-gracia" ${c&&c.graciaMes?'checked':''} style="width:18px;height:18px;accent-color:var(--primary)"> No cobra el primer mes de interés (se prellena en las compras nuevas)</label></div>
     <div id="tc-err" style="color:var(--neg);font-size:13px;font-weight:600;min-height:16px"></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn primary" id="tc-ok">Guardar</button></div>`);
   $('#tc-ok').onclick=async()=>{
     const name=$('#tc-name').value.trim(), rate=num($('#tc-rate').value), fee=moneyNum($('#tc-fee').value)||0, seguro=moneyNum($('#tc-seg').value)||0, limit=moneyNum($('#tc-limit').value)||0, graciaMes=$('#tc-gracia').checked?1:0;
+    const fechaCorte=Math.max(0,Math.min(31,+($('#tc-corte').value)||0)), fechaPago=Math.max(0,Math.min(31,+($('#tc-pago').value)||0));
     const err=$('#tc-err');
     if(!name){ err.textContent='Ponle nombre a la tarjeta.'; return; }
     if(rate==null||rate<0||rate>500){ err.textContent='Revisa la tasa: entre 0 y 500% E.A.'; return; }
-    if(c){ c.name=name; c.ratePct=rate; c.fee=fee; c.seguro=seguro; c.limit=limit; c.graciaMes=graciaMes; cardDebts(c.id).forEach(d=>{ d.annualRate=rate; }); }
-    else cardsList().push({id:'c'+Date.now(), name, ratePct:rate, fee, seguro, limit, graciaMes});
+    if(c){ c.name=name; c.ratePct=rate; c.fee=fee; c.seguro=seguro; c.limit=limit; c.graciaMes=graciaMes; c.fechaCorte=fechaCorte; c.fechaPago=fechaPago; cardDebts(c.id).forEach(d=>{ d.annualRate=rate; }); }
+    else cardsList().push({id:'c'+Date.now(), name, ratePct:rate, fee, seguro, limit, graciaMes, fechaCorte, fechaPago});
     await saveDebts(); closeModal(); renderDebts(); toast(c?'Tarjeta actualizada':'Tarjeta creada 💳');
   };
 };
 window.purchaseModal=(cid)=>{
   const c=cardsList().find(x=>x.id===cid); if(!c)return;
-  openModal(`<h2>Compra diferida</h2><div class="msub">${esc(c.name)} · tasa ${c.ratePct}% E.A.</div>
+  const today=new Date().toISOString().slice(0,10);
+  openModal(`<h2>Compra diferida</h2><div class="msub">${esc(c.name)} · tasa ${c.ratePct}% E.A.${c.fechaCorte?' · corte día '+c.fechaCorte:''}</div>
     <div class="field"><label>¿Qué compraste?</label><input id="pc-name" placeholder="Mercado, vuelo, celular..."></div>
     <div class="form-grid">
       <div class="field"><label>Monto de la compra</label><input id="pc-amt" type="text" inputmode="numeric" class="money" placeholder="0"></div>
       <div class="field"><label># de cuotas</label><input id="pc-n" type="number" min="1" max="120" value="12"></div>
       <div class="field"><label>Meses sin intereses <span style="color:var(--text3)">(opcional)</span></label><input id="pc-msi" type="number" min="0" max="120" value="${c.graciaMes||0}"></div>
-      <div class="field"><label>Mes de la primera cuota</label><select id="pc-m">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${i===todayMonth()?'selected':''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label>Fecha de compra</label><input id="pc-buy" type="date" value="${today}"></div>
+      <div class="field"><label>Mes de la primera cuota${c.fechaCorte?' <span style="color:var(--text3)">(auto)</span>':''}</label><select id="pc-m">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${i===todayMonth()?'selected':''}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Año</label><input id="pc-y" type="number" value="${S.config.activeYear}" min="2020" max="2099"></div>
     </div>
     <div id="pc-hint" style="font-size:12.5px;color:var(--text2);min-height:18px;margin-bottom:6px"></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn pos" id="pc-ok">Agregar</button></div>`);
+  const recalc=()=>{ // v4.1: con corte configurado, la fecha de compra decide el mes de la 1ª cuota
+    if(!c.fechaCorte) return;
+    const pc=primeraCuota($('#pc-buy').value, c.fechaCorte, c.fechaPago||0);
+    if(pc){ $('#pc-m').value=pc.month; $('#pc-y').value=pc.year; }
+  };
   const hint=()=>{
     const P=moneyNum($('#pc-amt').value)||0, n=+$('#pc-n').value||0, g=Math.max(0,+($('#pc-msi').value)||0);
     const h=$('#pc-hint'); if(!h)return;
+    let corteMsg='';
+    if(c.fechaCorte && $('#pc-buy').value){
+      const bd=new Date($('#pc-buy').value+'T00:00:00');
+      if(!isNaN(bd.getTime())){ const after=bd.getDate()>c.fechaCorte;
+        corteMsg=`🗓️ Compraste el ${bd.getDate()} (${after?'después':'antes/el día'} del corte ${c.fechaCorte}) → 1ª cuota: <b>${MONTH_NAMES[(+$('#pc-m').value||1)-1]} ${$('#pc-y').value}</b>.<br>`; }
+    }
     if(P>0&&n>0){ const q=cuotaFija(P,c.ratePct,n,g); const interes=Math.max(0,q*n-P);
-      h.innerHTML=`Cuota: <b>${COP(q)}/mes</b> × ${n} = ${COP(q*n)} <span style="color:var(--text3)">(${interes>0?COP(interes)+' de intereses':'sin intereses 🎉'}${g>0&&g<n?` · ${g} mes${g!==1?'es':''} sin interés`:''})</span>`; }
-    else h.textContent='';
+      h.innerHTML=corteMsg+`Cuota: <b>${COP(q)}/mes</b> × ${n} = ${COP(q*n)} <span style="color:var(--text3)">(${interes>0?COP(interes)+' de intereses':'sin intereses 🎉'}${g>0&&g<n?` · ${g} mes${g!==1?'es':''} sin interés`:''})</span>`; }
+    else h.innerHTML=corteMsg;
   };
-  ['pc-amt','pc-n','pc-msi'].forEach(i=>$('#'+i).addEventListener('input',hint)); hint();
+  ['pc-amt','pc-n','pc-msi'].forEach(i=>$('#'+i).addEventListener('input',hint));
+  { const b=$('#pc-buy'); if(b) b.addEventListener('change',()=>{ recalc(); hint(); }); }
+  recalc(); hint();
   $('#pc-ok').onclick=async()=>{
     const P=moneyNum($('#pc-amt').value), n=+$('#pc-n').value, g=Math.max(0,+($('#pc-msi').value)||0);
     if(!P||!(n>0))return;
     S.debts.debts.push({ id:'d'+Date.now(), name:$('#pc-name').value.trim()||'Compra', principal:P,
       annualRate:c.ratePct, monthlyPayment:cuotaFija(P,c.ratePct,n,g), cuotas:n, sinInteres:g, type:'tarjeta',
-      startMonth:+$('#pc-m').value, startYear:+$('#pc-y').value, payments:[], cardId:c.id, color:'#FF6B6B' });
+      startMonth:+$('#pc-m').value, startYear:+$('#pc-y').value, buyDate:($('#pc-buy').value||undefined), payments:[], cardId:c.id, color:'#FF6B6B' });
     await saveDebts(); closeModal(); renderDebts(); toast('Compra registrada 💳');
   };
 };
@@ -3207,7 +3252,7 @@ function debtCard(d){
   card.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
       <div><div style="font-size:17px;font-weight:800">${esc(d.name)} ${done?'<span class="tag done" style="margin-left:6px">Saldada</span>':''}</div>
-      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.type} · tasa ${d.annualRate}% E.A. · cuota ${COP(d.monthlyPayment)}${d.sinInteres?' · '+d.sinInteres+' mes'+(d.sinInteres!==1?'es':'')+' sin interés':''}${d.seguro?' · seguro '+COP(d.seguro)+'/mes':''}${d.seguro&&!done?' · total '+COP(d.monthlyPayment+d.seguro)+'/mes':''}</div></div>
+      <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.type} · tasa ${d.annualRate}% E.A. · cuota ${COP(d.monthlyPayment)}${d.dueDay?' · pago día '+d.dueDay:''}${d.sinInteres?' · '+d.sinInteres+' mes'+(d.sinInteres!==1?'es':'')+' sin interés':''}${d.seguro?' · seguro '+COP(d.seguro)+'/mes':''}${d.seguro&&!done?' · total '+COP(d.monthlyPayment+d.seguro)+'/mes':''}</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn sm" onclick="payModal('${d.id}')">+ Registrar pago</button>
         <button class="btn sm icon" onclick="debtModal('${d.id}')" title="Editar deuda">${icoEdit}</button>
@@ -3275,6 +3320,7 @@ function debtModal(id){
       <div class="field"><label>Cuota mensual (COP)</label><input id="d-pay" type="text" inputmode="numeric" class="money" value="${d?d.monthlyPayment:''}"></div>
       <div class="field"><label>Seguro mensual <span style="color:var(--text3)">(opcional)</span></label><input id="d-seg" type="text" inputmode="numeric" class="money" value="${d&&d.seguro?d.seguro:''}" placeholder="ej: 20.000"></div>
       <div class="field"><label>Meses sin intereses <span style="color:var(--text3)">(opcional)</span></label><input id="d-msi" type="number" min="0" max="600" value="${d&&d.sinInteres?d.sinInteres:''}" placeholder="0"></div>
+      <div class="field"><label>Día de pago del mes <span style="color:var(--text3)">(opcional)</span></label><input id="d-due" type="number" min="1" max="31" value="${d&&d.dueDay?d.dueDay:''}" placeholder="ej: 5"></div>
       <div class="field"><label>Tipo</label><select id="d-type">${['tarjeta','consumo','hipotecario','libranza','otro'].map(t=>`<option ${d&&d.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
       <div class="field"><label>Mes inicio</label><select id="d-sm">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${d&&d.startMonth===i+1?'selected':(!d&&i===todayMonth()?'selected':'')}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Año inicio</label><input id="d-sy" type="number" value="${d?d.startYear:S.config.activeYear}"></div>
@@ -3295,7 +3341,7 @@ function debtModal(id){
   updHint();
   $('#d-ok').onclick=async()=>{
     const o={name:$('#d-name').value||'Deuda',principal:moneyNum($('#d-prin').value)||0,annualRate:num($('#d-rate').value)||0,
-      monthlyPayment:moneyNum($('#d-pay').value)||0,seguro:moneyNum($('#d-seg').value)||0,sinInteres:Math.max(0,+($('#d-msi').value)||0),type:$('#d-type').value,startMonth:+$('#d-sm').value,startYear:+$('#d-sy').value,color:d&&d.color?d.color:'#FF6B6B'};
+      monthlyPayment:moneyNum($('#d-pay').value)||0,seguro:moneyNum($('#d-seg').value)||0,sinInteres:Math.max(0,+($('#d-msi').value)||0),dueDay:Math.max(0,Math.min(31,+($('#d-due').value)||0)),type:$('#d-type').value,startMonth:+$('#d-sm').value,startYear:+$('#d-sy').value,color:d&&d.color?d.color:'#FF6B6B'};
     const err=$('#d-err');
     if(o.principal<=0){ err.textContent='El saldo / capital debe ser mayor que cero.'; return; }
     if(o.annualRate<0 || o.annualRate>500){ err.textContent='Revisa la tasa: debe estar entre 0 y 500% E.A.'; return; }
@@ -4717,7 +4763,7 @@ const VIEW_TOURS={
     {sel:'.page-head',t:'Ahorros y Proyectos 🎯',p:'Crea metas (viaje, apartamento...) con su valor y fecha objetivo.'},
     {sel:'.card',t:'Cada meta te habla',p:'Registra aportes y la app calcula cuándo llegas; si le pones rentabilidad, también cuánto te rinde.'}],
   debts:[
-    {sel:'.page-head',t:'Deudas y Créditos 💳',p:'“+ Nueva deuda” para créditos normales; “💳 + Tarjeta” para tu tarjeta de crédito y sus compras diferidas.'},
+    {sel:'.page-head',t:'Deudas y Créditos 💳',p:'“+ Nueva deuda” para créditos normales; “💳 + Tarjeta” para tu tarjeta y sus compras diferidas. Tip: a la tarjeta ponle su día de corte y de pago — así, al registrar una compra, la app calcula sola en qué mes empieza la primera cuota. Y a una deuda ponle su día de pago para que te avise cuando venza.'},
     {sel:'.kpi-row',t:'Tu foto de deudas',p:'Cuánto debes en total, la cuota mensual combinada y cuántas deudas siguen vivas.'},
     {sel:'.card',t:'Cada deuda al detalle',p:'Registra pagos, mira la tabla de amortización y usa el simulador: “si abono X extra, ¿cuánto me ahorro?”. En tarjetas, cada compra tiene su 📊 Detalle.'}],
   invest:[
