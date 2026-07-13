@@ -287,6 +287,10 @@ table.sheet tr.total td.mname,table.sheet tr.avg td.mname{background:var(--panel
 /* v3.0: fecha de pago y comprobantes */
 .ci-date{font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:3px 8px;border-radius:20px;white-space:nowrap;cursor:pointer}
 .ci-date:hover{filter:brightness(1.15)}
+/* v3.7: gastos hormiga — pill de aviso de cupo + botón de pagos */
+.cupo-pill{font-size:10.5px;font-weight:800;padding:2px 7px;border:1.5px solid;border-radius:20px;white-space:nowrap;background:transparent}
+.ci-ant{font-size:14px;cursor:pointer;opacity:.55;padding:0 3px;transition:.12s;line-height:1}
+.ci-ant:hover{opacity:1;transform:scale(1.18)}
 .rc-row{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--input);border:1px solid var(--border);border-radius:10px;margin-bottom:7px;flex-wrap:wrap}
 .rc-row .rc-name{font-weight:700;font-size:13px;flex:1;min-width:120px}
 .rc-row .rc-date{font-size:12px;color:var(--text2)}
@@ -584,6 +588,10 @@ table.sheet td .cell{white-space:nowrap}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M9 13l6 6M15 13a.5.5 0 100 .01M9 19a.5.5 0 100 .01"/></svg>
       Declaración de Renta
     </div>
+    <div class="nav-item" data-view="hormiga">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>
+      Gastos hormiga
+    </div>
     <div class="nav-item" data-view="charts">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-7"/></svg>
       Gráficas
@@ -683,9 +691,15 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.6';
+const APP_VERSION='3.7';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.7', emoji:'🐜', title:'Gastos hormiga: en qué se te va la plata', items:[
+    '🐜 Gastos hormiga: dentro de cada rubro puedes anotar los gasticos pequeños (café, mercado, papas…) con concepto, monto y comprobante opcional. La suma se vuelve el gasto real de ese rubro.',
+    '🚦 Cupo con semáforo: tu presupuesto pasa a ser un tope. Te avisa en Este mes cuando un rubro va cerca (🟡) o se pasó (🔴).',
+    '📊 Módulo nuevo “Gastos hormiga” (opcional, se esconde en Modo sencillo): dónde se te va la plata por rubro, tus mayores fugas del mes y el resumen del año.',
+    '📈 En Gráficas: “¿En qué se te va la plata?” por rubro y los cupos apretados del mes. Y en el botón ⚡ un chip nuevo para anotar un gasto hormiga al toque.'
+  ]},
   {v:'3.6', emoji:'🧾', title:'Meses sin intereses y gracia del primer mes', items:[
     '🧾 Compras a “meses sin intereses”: al registrar una compra diferida puedes poner cuántos meses van sin interés. Si la promo cubre todas las cuotas, no pagas ni un peso de interés.',
     '🎁 Tarjetas con gracia: marca “no cobra el primer mes de interés” en la tarjeta y se prellena solo en cada compra nueva.',
@@ -1612,7 +1626,7 @@ window.usdConvModal=(cm)=>{
 /* ===== v2.7: REGISTRO RÁPIDO ⚡ (botón + flotante) =====
    Un solo modal para anotar lo del día: la app lo guarda donde corresponde. */
 window.quickAdd=(type)=>{
-  const types=[['gasto','🧾 Gasto'],['extra','💸 Ingreso extra'],['meta','🎯 Aporte a meta'],['deuda','💳 Pago de deuda']];
+  const types=[['gasto','🧾 Gasto'],['pago','🐜 Gasto hormiga'],['extra','💸 Ingreso extra'],['meta','🎯 Aporte a meta'],['deuda','💳 Pago de deuda']];
   if(usdOn()) types.push(['usd',fx().flag+' Conversión a COP']);
   type=type||'gasto';
   if(type==='usd'){ closeModal(); usdConvModal(todayMonth()); return; }
@@ -1628,6 +1642,13 @@ window.quickAdd=(type)=>{
         <option value="real" ${dest==='real'?'selected':''}>🧾 En gastos reales (comparar vs plan)</option>
       </select></div></div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Se SUMA a lo que ya tenga ese rubro en el mes. Si usas una sola hoja, déjalo en 📋; la app recuerda tu elección.</div>`;
+  } else if(type==='pago'){
+    const rs=activeRubros();
+    body=rs.length?`<div class="form-grid"><div class="field"><label>Rubro</label><select id="qa-rubro">${rs.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>¿En qué?</label><input id="qa-lbl" placeholder="Café, mercado, taxi..."></div>
+      <div class="field"><label>Monto</label><input id="qa-amt" type="text" inputmode="numeric" class="money" placeholder="0"></div>${mesSel}</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Se suma al gasto real de ese rubro (gasto hormiga). Para adjuntar comprobante, hazlo desde el 🐜 del rubro en Este mes.</div>`
+      :`<div class="help" style="margin:0 0 8px">${icoInfo}<div>Primero crea rubros en <b>Rubros</b>.</div></div>`;
   } else if(type==='extra'){
     body=`<div class="field"><label>Concepto</label><input id="qa-lbl" placeholder="Freelance, venta, bono..."></div>
       <div class="form-grid"><div class="field"><label>Monto</label><input id="qa-amt" type="text" inputmode="numeric" class="money" placeholder="0"></div>${mesSel}</div>`;
@@ -1662,6 +1683,10 @@ window.quickAdd=(type)=>{
       if(dest==='real'){ md.expenses[rid].real=(md.expenses[rid].real||0)+amt; delete md.expenses[rid].realAuto; }
       else { md.expenses[rid].budget=(md.expenses[rid].budget||0)+amt; }
       await saveYear(); toast('Gasto sumado a '+MONTH_NAMES[mi]+(dest==='real'?' 🧾':' 📋'));
+    } else if(type==='pago'){
+      const rid=$('#qa-rubro').value;
+      await addPago(mi, rid, ($('#qa-lbl').value||'').trim()||'Pago', amt);
+      toast('Gasto hormiga anotado 🐜');
     } else if(type==='extra'){
       if(!md.extras)md.extras=[];
       md.extras.push({label:($('#qa-lbl').value||'').trim()||'Extra', amount:amt});
@@ -1792,6 +1817,103 @@ window.rubroReceipts=(rid)=>{
   document.querySelectorAll('[data-rrd]').forEach(b=>b.onclick=()=>{ const rc=find(+b.dataset.mi,b.dataset.rrd); if(!rc)return;
     confirmModal('¿Eliminar comprobante?','Se borrará "'+esc(rc.name)+'" y su imagen definitivamente.', async()=>{ await deleteReceipt(+b.dataset.mi,rid,rc.id); toast('Comprobante eliminado'); rubroReceipts(rid); }); });
 };
+/* ===== v3.7: GASTOS HORMIGA 🐜 =====
+   Pagos itemizados dentro de un rubro (café, papas, mercado...). La SUMA de los
+   pagos alimenta el gasto real del rubro (config del usuario). Cada pago puede
+   llevar comprobante opcional (reusa el motor cifrado de recibos). Aditivo:
+   md.expenses[rid].items = [{id,label,amount,date,receipt?}]. */
+function rubroItems(md, rid){ return (md.expenses && md.expenses[rid] && md.expenses[rid].items) || []; }
+function rubroItemsTotal(md, rid){ return rubroItems(md,rid).reduce((a,it)=>a+(it.amount||0),0); }
+// Al cambiar pagos: si hay, el real del rubro = suma de pagos; si no queda ninguno, real vuelve a null.
+function syncRubroReal(md, rid){ const c=md.expenses&&md.expenses[rid]; if(!c)return;
+  if(c.items && c.items.length){ c.real=rubroItemsTotal(md,rid); delete c.realAuto; }
+  else if(c.items){ delete c.items; c.real=null; } }
+// Gasto real del rubro en el mes: pagos si los hay, si no el real manual (0 si nada).
+function rubroSpent(md, rid){ const c=md.expenses&&md.expenses[rid]; if(!c)return 0;
+  if(c.items&&c.items.length) return rubroItemsTotal(md,rid); return c.real||0; }
+// Estado del cupo del rubro: null si no hay gasto; si no {spent,budget,pct,level:'ok'|'warn'|'over'}.
+function cupoState(md, r){
+  const budget=rubroAmount(md, r, 'budget')||0, spent=rubroSpent(md, r.id);
+  if(spent<=0) return null;
+  const pct= budget>0? spent/budget : 1.5;
+  const level= budget<=0? 'over' : (pct>=1?'over':(pct>=0.8?'warn':'ok'));
+  return {spent, budget, pct, level};
+}
+const CUPO_COLOR={ok:'var(--pos)',warn:'var(--warn)',over:'var(--neg)'};
+// Núcleo (también lo usan los tests): agrega un pago (con imagen opcional ya leída en bytes).
+async function addPago(mi, rid, label, amount, date, imgU8, imgType){
+  const md=S.year.months[mi];
+  if(!md.expenses[rid]) md.expenses[rid]={budget:null,real:null};
+  if(!md.expenses[rid].items) md.expenses[rid].items=[];
+  const id='pg'+Date.now()+Math.floor(Math.random()*1000);
+  const pago={id, label:(label||'Pago'), amount:amount||0, date:date||new Date().toISOString().slice(0,10)};
+  if(imgU8 && imgU8.length){
+    const file=id+'.'+(((imgType||'').includes('png'))?'png':'jpg');
+    await Store.fileWrite('comprobantes/'+S.config.activeYear+'/'+file, imgU8);
+    pago.receipt={name:pago.label, date:pago.date, file, type:imgType||'image/jpeg'};
+  }
+  md.expenses[rid].items.push(pago);
+  syncRubroReal(md, rid);
+  await saveYear();
+  return pago;
+}
+async function deletePago(mi, rid, pagoId){
+  const md=S.year.months[mi]; const arr=(md.expenses[rid]&&md.expenses[rid].items)||[];
+  const i=arr.findIndex(p=>p.id===pagoId); if(i<0)return;
+  if(arr[i].receipt && arr[i].receipt.file){ try{ await Store.fileDel('comprobantes/'+S.config.activeYear+'/'+arr[i].receipt.file); }catch(e){} }
+  arr.splice(i,1);
+  syncRubroReal(md, rid);
+  await saveYear();
+}
+// Modal por rubro: cupo + lista de pagos + agregar pago (con comprobante opcional).
+window.rubroPagosModal=(cm, rid)=>{
+  const md=S.year.months[cm];
+  const r=S.config.rubros.find(x=>x.id===rid);
+  const items=rubroItems(md,rid).slice().sort((a,b)=>(b.amount||0)-(a.amount||0));
+  const cs=cupoState(md, r||{id:rid});
+  const today=new Date().toISOString().slice(0,10);
+  let bar='';
+  if(cs){
+    const pctTxt=(cs.pct*100).toFixed(0)+'%';
+    const msg= cs.level==='over' ? `🔴 Te pasaste del presupuesto por <b>${COP(cs.spent-cs.budget)}</b>.`
+      : cs.level==='warn' ? `🟡 Vas en el <b>${pctTxt}</b> del cupo — te quedan ${COP(Math.max(0,cs.budget-cs.spent))}.`
+      : `🟢 Vas bien: llevas el <b>${pctTxt}</b> del cupo.`;
+    bar=`<div style="margin:2px 0 12px">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text2);font-weight:600;margin-bottom:3px"><span>Gastado ${COP(cs.spent)}</span><span>Cupo ${cs.budget>0?COP(cs.budget):'sin presupuesto'}</span></div>
+      <div class="progress"><div class="fill" style="width:${Math.min(100,cs.pct*100)}%;background:${CUPO_COLOR[cs.level]}"></div></div>
+      <div style="font-size:12px;color:var(--text2);margin-top:5px">${msg}</div></div>`;
+  }
+  openModal(`<h2>${esc(r?r.name:'Rubro')} · pagos de ${MONTH_NAMES[cm]} 🐜</h2>
+    <div class="msub">Anota cada gastico (café, mercado, papas...). La suma es tu gasto real de este rubro${Crypto.key?' · 🔐 comprobantes cifrados':''}.</div>
+    ${bar}
+    <div class="section-label">Pagos (${items.length})</div>
+    ${items.length? items.map(p=>`<div class="rc-row"><span>🐜</span><span class="rc-name">${esc(p.label)}${p.receipt?' 🧾':''}</span><span class="rc-date">${fmtPayDate(p.date)}</span><span style="font-weight:700;margin-left:auto">${COP(p.amount)}</span>
+      ${p.receipt?`<button class="btn sm" data-pgv="${p.id}">Ver</button>`:''}<button class="btn sm icon danger" data-pgd="${p.id}" title="Eliminar">${icoTrash}</button></div>`).join('')
+      :'<div style="font-size:12.5px;color:var(--text3);margin-bottom:4px">Aún no hay pagos en este rubro. Agrega el primero 👇</div>'}
+    <div class="section-label">Agregar pago</div>
+    <div class="form-grid">
+      <div class="field"><label>¿En qué?</label><input id="pg-lbl" placeholder="Café, mercado, taxi..."></div>
+      <div class="field"><label>Monto</label><input id="pg-amt" type="text" inputmode="numeric" class="money" placeholder="0"></div>
+      <div class="field"><label>Fecha</label><input id="pg-date" type="date" value="${today}"></div>
+    </div>
+    <div class="field"><label>Comprobante <span style="color:var(--text3)">(opcional)</span></label><input id="pg-file" type="file" accept="image/*"></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn pos" id="pg-add">🐜 Agregar pago</button></div>`);
+  $('#pg-add').onclick=async()=>{
+    const amt=moneyNum($('#pg-amt').value);
+    if(!amt){ toast('Pon el monto del pago'); $('#pg-amt').focus(); return; }
+    const lbl=$('#pg-lbl').value.trim()||'Pago';
+    const b=$('#pg-add'); b.disabled=true; b.textContent='Guardando…';
+    const f=$('#pg-file').files && $('#pg-file').files[0];
+    let u8=null,type=null; if(f){ const s=await shrinkImage(f); u8=s.u8; type=s.type; }
+    await addPago(cm, rid, lbl, amt, $('#pg-date').value, u8, type);
+    toast('Pago agregado 🐜');
+    rubroPagosModal(cm, rid);
+    if(S.view==='dashboard') renderMonth(cm); else if(S.view==='hormiga') renderHormiga();
+  };
+  document.querySelectorAll('[data-pgv]').forEach(btn=>btn.onclick=()=>{ const p=items.find(x=>x.id===btn.dataset.pgv); if(p&&p.receipt) viewReceipt(p.receipt); });
+  document.querySelectorAll('[data-pgd]').forEach(btn=>btn.onclick=()=>{ const p=items.find(x=>x.id===btn.dataset.pgd); if(!p)return;
+    confirmModal('¿Eliminar pago?','Se borrará "'+esc(p.label)+'" ('+COP(p.amount)+')'+(p.receipt?' y su comprobante':'')+'.', async()=>{ await deletePago(cm,rid,p.id); toast('Pago eliminado'); rubroPagosModal(cm,rid); if(S.view==='dashboard') renderMonth(cm); else if(S.view==='hormiga') renderHormiga(); }); });
+};
 function debtDoneThisMonth(d, yr, mi){ return (d.payments||[]).some(p=>p.year===yr&&p.month===mi+1); }
 function toggleDebtMonth(d, yr, mi){
   const has=debtDoneThisMonth(d,yr,mi);
@@ -1804,7 +1926,7 @@ function toggleDebtMonth(d, yr, mi){
    ROUTER
    ========================================================= */
 /* v2.8: funcionalidades opcionales — vistas que se pueden apagar sin tocar datos */
-const OPTIONAL_VIEWS=[['invest','🌱 Inversión'],['patrimonio','🏛️ Patrimonio Neto'],['renta','🇨🇴 Declaración de Renta']];
+const OPTIONAL_VIEWS=[['invest','🌱 Inversión'],['patrimonio','🏛️ Patrimonio Neto'],['renta','🇨🇴 Declaración de Renta'],['hormiga','🐜 Gastos hormiga']];
 function viewHidden(v){ return !!(S.config && S.config.hiddenViews && S.config.hiddenViews.includes(v)); }
 function applyHiddenViews(){
   document.querySelectorAll('.nav-item').forEach(n=>{ if(n.dataset.view) n.classList.toggle('hide', viewHidden(n.dataset.view)); });
@@ -1812,11 +1934,11 @@ function applyHiddenViews(){
 function setView(v){
   if(viewHidden(v)) v='dashboard'; // vista apagada → al inicio
   S.view=v;
-  try{ document.title='Finance OS · '+({dashboard:'Este mes',sheet:'Hoja del Año',rubros:'Rubros',savings:'Ahorros',debts:'Deudas',invest:'Inversión',patrimonio:'Patrimonio',renta:'Renta',charts:'Gráficas',settings:'Configuración'}[v]||'Dylan'); }catch(e){}
+  try{ document.title='Finance OS · '+({dashboard:'Este mes',sheet:'Hoja del Año',rubros:'Rubros',savings:'Ahorros',debts:'Deudas',invest:'Inversión',patrimonio:'Patrimonio',renta:'Renta',hormiga:'Gastos hormiga',charts:'Gráficas',settings:'Configuración'}[v]||'Dylan'); }catch(e){}
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.view===v));
   CHARTS.forEach(c=>{try{c.destroy()}catch(e){}}); CHARTS=[];
   const m=$('#main'); m.scrollTop=0;
-  ({dashboard:renderDashboard,sheet:renderSheet,savings:renderSavings,debts:renderDebts,invest:renderInvest,patrimonio:renderPatrimonio,renta:renderRenta,rubros:renderRubros,charts:renderCharts,settings:renderSettings}[v])();
+  ({dashboard:renderDashboard,sheet:renderSheet,savings:renderSavings,debts:renderDebts,invest:renderInvest,patrimonio:renderPatrimonio,renta:renderRenta,rubros:renderRubros,hormiga:renderHormiga,charts:renderCharts,settings:renderSettings}[v])();
   m.firstElementChild&&m.firstElementChild.classList.add('fade');
   // v2.5: botón flotante de guía por vista
   if(VIEW_TOURS[v] && !$('#view-guide')){
@@ -2002,10 +2124,16 @@ function renderMonth(cm){
     // v3.0: fecha del pago (y acceso a comprobantes) en rubros pagados
     const payAt = it.kind==='rubro' && it.done && md.paidAt ? md.paidAt[it.id] : null;
     const nRec = it.kind==='rubro' && md.receipts && md.receipts[it.id] ? md.receipts[it.id].length : 0;
+    // v3.7: aviso de cupo (solo warning/over, para no ensuciar los rubros simples) + acceso a pagos hormiga
+    const rObj = it.kind==='rubro' ? rubros.find(x=>x.id===it.id) : null;
+    const cs = rObj ? cupoState(md, rObj) : null;
+    const pill = (cs && cs.level!=='ok') ? `<span class="cupo-pill" style="color:${CUPO_COLOR[cs.level]};border-color:${CUPO_COLOR[cs.level]}" title="Gastado ${COP(cs.spent)} de ${cs.budget>0?COP(cs.budget):'—'}">${cs.level==='over'?'🔴':'🟡'} ${(cs.pct*100).toFixed(0)}%</span>` : '';
     row.innerHTML=`<div class="check-box">${icoCheck}</div>
       <span class="ci-swatch" style="background:${it.color}"></span>
       <span class="ci-name">${esc(it.name)}</span>
       ${it.kind==='rubro'&&it.done?`<span class="ci-date" data-pay="${it.id}" title="Fecha del pago y comprobantes — toca para editar">📅 ${payAt?fmtPayDate(payAt):'sin fecha'}${nRec?' · 🧾'+nRec:''}</span>`:''}
+      ${pill}
+      ${it.kind==='rubro'?`<span class="ci-ant" data-pago="${it.id}" title="Pagos de este rubro (gastos hormiga 🐜)">🐜</span>`:''}
       <span class="ci-tag">${esc(it.tag)}</span>
       <span class="ci-amt">${COP(it.amount)}</span>`;
     list.appendChild(row);
@@ -2173,6 +2301,8 @@ function renderMonth(cm){
       // v3.0: tocar la fecha 📅 abre el detalle del pago, no desmarca
       const pd=ev.target.closest('[data-pay]');
       if(pd){ ev.stopPropagation(); payDetailModal(cm, pd.dataset.pay); return; }
+      const pg=ev.target.closest('[data-pago]');
+      if(pg){ ev.stopPropagation(); rubroPagosModal(cm, pg.dataset.pago); return; }
       const kind=it.dataset.kind, id=it.dataset.id;
       if(kind==='rubro'){ togglePaid(cm, id); }
       else if(kind==='saving'){ const p=S.savings.projects.find(x=>x.id===id); const was=savingsDoneThisMonth(p,yr0,cm); toggleSavingsMonth(p,yr0,cm);
@@ -3693,6 +3823,74 @@ window.delRubro=(id)=>{
 /* =========================================================
    VIEW: GRÁFICAS
    ========================================================= */
+/* =========================================================
+   VIEW: GASTOS HORMIGA 🐜  (opcional)
+   ========================================================= */
+function renderHormiga(){
+  const m=$('#main'); m.innerHTML='';
+  const cm = S._hormMes!=null ? S._hormMes : ((todayYear()===S.config.activeYear)? todayMonth() : 0);
+  m.appendChild(el('div','page-head',`
+    <div><h1>Gastos hormiga 🐜</h1><div class="sub">En qué se te va la plata de a poquitos — y si algún rubro se pasó del cupo.</div></div>
+    <div class="head-actions"><button class="btn sm icon" id="hm-prev" title="Mes anterior">‹</button><select class="sel" id="hm-mes"></select><button class="btn sm icon" id="hm-next" title="Mes siguiente">›</button></div>`));
+  const msel=$('#hm-mes'); MONTH_LABELS.forEach((l,i)=>{const o=el('option',null,l);o.value=i;if(i===cm)o.selected=true;msel.appendChild(o);});
+  msel.onchange=()=>{ S._hormMes=+msel.value; renderHormiga(); };
+  const go=d=>{ const n=Math.max(0,Math.min(11,cm+d)); if(n!==cm){ S._hormMes=n; renderHormiga(); } };
+  $('#hm-prev').onclick=()=>go(-1); $('#hm-next').onclick=()=>go(1);
+
+  const md=S.year.months[cm];
+  const rubros=activeRubros();
+  const anyYear = S.year.months.some(mm=> rubros.some(r=> rubroItems(mm,r.id).length));
+  if(!anyYear){
+    m.appendChild(emptyState('🐜','Aún no registras gastos hormiga','Son esos gasticos pequeños que suman sin que te des cuenta: el café, las papas, el domicilio... Anótalos dentro de un rubro y aquí verás en qué se te va la plata.',
+      `<button class="btn primary" onclick="setView('dashboard')">Ir a Este mes y tocar 🐜 en un rubro</button>`));
+    return;
+  }
+
+  // ===== MES EN CURSO =====
+  const conPagos = rubros.map(r=>({r, items:rubroItems(md,r.id), cs:cupoState(md,r)})).filter(x=>x.items.length)
+    .sort((a,b)=> b.items.reduce((s,i)=>s+(i.amount||0),0) - a.items.reduce((s,i)=>s+(i.amount||0),0));
+  const totalMes = conPagos.reduce((a,x)=>a+x.items.reduce((s,it)=>s+(it.amount||0),0),0);
+  m.appendChild(el('div','month-list-head',`<span class="t">Lo de ${MONTH_NAMES[cm]}</span><span class="c">Total hormiga ${COP(totalMes)}</span>`));
+  if(conPagos.length){
+    conPagos.forEach(({r,items,cs})=>{
+      const spent=items.reduce((s,i)=>s+(i.amount||0),0);
+      const top=items.slice().sort((a,b)=>(b.amount||0)-(a.amount||0)).slice(0,5);
+      const card=el('div','card'); card.style.marginTop='12px';
+      card.innerHTML=`
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="font-weight:800;font-size:15px"><span class="ci-swatch" style="display:inline-block;background:${r.color}"></span> ${esc(r.name)}</div>
+          <button class="btn sm" data-hm-rubro="${r.id}">🐜 Ver / agregar</button>
+        </div>
+        ${cs?`<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);font-weight:600;margin:10px 0 3px"><span>Gastado ${COP(spent)}</span><span>Cupo ${cs.budget>0?COP(cs.budget):'—'} · ${(cs.pct*100).toFixed(0)}%</span></div>
+        <div class="progress"><div class="fill" style="width:${Math.min(100,cs.pct*100)}%;background:${CUPO_COLOR[cs.level]}"></div></div>
+        ${cs.level==='over'?`<div style="font-size:12px;color:var(--neg);font-weight:600;margin-top:5px">🔴 Te pasaste por ${COP(cs.spent-cs.budget)}</div>`:cs.level==='warn'?`<div style="font-size:12px;color:var(--warn);font-weight:600;margin-top:5px">🟡 Cerca del tope — te quedan ${COP(Math.max(0,cs.budget-cs.spent))}</div>`:''}`:''}
+        <div class="section-label" style="margin-top:12px">Sus pagos (${items.length})</div>
+        ${top.map(p=>`<div class="rc-row"><span>🐜</span><span class="rc-name">${esc(p.label)}${p.receipt?' 🧾':''}</span><span class="rc-date">${fmtPayDate(p.date)}</span><span style="font-weight:700;margin-left:auto">${COP(p.amount)}</span></div>`).join('')}
+        ${items.length>5?`<div style="font-size:12px;color:var(--text3)">… y ${items.length-5} pago(s) más</div>`:''}`;
+      m.appendChild(card);
+      card.querySelector('[data-hm-rubro]').onclick=()=>rubroPagosModal(cm, r.id);
+    });
+    // Top fugas del mes (todos los pagos, mayor a menor)
+    const all=[]; conPagos.forEach(({r,items})=>items.forEach(it=>all.push({r,it})));
+    all.sort((a,b)=>(b.it.amount||0)-(a.it.amount||0));
+    const tf=el('div','card'); tf.style.marginTop='16px';
+    tf.innerHTML=`<div class="card-title">🔎 Tus mayores fugas de ${MONTH_NAMES[cm]}</div>
+      ${all.slice(0,8).map(({r,it})=>`<div class="rc-row"><span class="ci-swatch" style="background:${r.color}"></span><span class="rc-name">${esc(it.label)}</span><span class="rc-date">${esc(r.name)}</span><span style="font-weight:700;margin-left:auto">${COP(it.amount)}</span></div>`).join('')}`;
+    m.appendChild(tf);
+  } else {
+    m.appendChild(el('div','card','<div style="color:var(--text2);font-size:13px">No hay gastos hormiga en '+MONTH_NAMES[cm]+'. Cámbiate de mes o agrégalos desde Este mes (🐜 en un rubro).</div>'));
+  }
+
+  // ===== RESUMEN DEL AÑO =====
+  const ranked=rubros.map(r=>({r, t:S.year.months.reduce((a,mm)=>a+rubroItems(mm,r.id).reduce((s,i)=>s+(i.amount||0),0),0)})).filter(x=>x.t>0).sort((a,b)=>b.t-a.t);
+  const yTotal=ranked.reduce((a,x)=>a+x.t,0);
+  const yc=el('div','card'); yc.style.marginTop='20px';
+  yc.innerHTML=`<div class="card-title">📅 En qué se te fue la plata en ${S.config.activeYear}</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px">Total en gastos hormiga del año: <b>${COP(yTotal)}</b></div>
+    ${ranked.map(({r,t})=>`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12.5px;font-weight:600;margin-bottom:3px"><span><span class="ci-swatch" style="display:inline-block;background:${r.color}"></span> ${esc(r.name)}</span><span>${COP(t)} · ${yTotal>0?(t/yTotal*100).toFixed(0):0}%</span></div><div class="progress"><div class="fill" style="width:${yTotal>0?(t/yTotal*100):0}%;background:${r.color}"></div></div></div>`).join('')}`;
+  m.appendChild(yc);
+}
+
 function renderCharts(){
   S.mode='budget';
   const m=$('#main'); m.innerHTML='';
@@ -3758,6 +3956,20 @@ function renderCharts(){
     }
   }
 
+  // v3.7: cupos apretados del mes en curso (gastos hormiga)
+  {
+    const cmn=(todayYear()===S.config.activeYear)?todayMonth():0;
+    const md=S.year.months[cmn];
+    const alerts=activeRubros().map(r=>({r,cs:cupoState(md,r)})).filter(x=>x.cs&&x.cs.level!=='ok').sort((a,b)=>b.cs.pct-a.cs.pct);
+    if(alerts.length){
+      const c=el('div','card'); c.style.marginBottom='16px';
+      c.innerHTML=`<div class="card-title">🚦 Cupos apretados en ${MONTH_NAMES[cmn]}</div>
+        <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">Rubros donde ya casi no te queda presupuesto (o te pasaste) este mes.</div>
+        ${alerts.map(({r,cs})=>`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12.5px;font-weight:600;margin-bottom:3px"><span><span class="ci-swatch" style="display:inline-block;background:${r.color}"></span> ${esc(r.name)}</span><span style="color:${CUPO_COLOR[cs.level]}">${cs.level==='over'?'🔴 pasado':'🟡 cerca'} · ${(cs.pct*100).toFixed(0)}%</span></div><div class="progress"><div class="fill" style="width:${Math.min(100,cs.pct*100)}%;background:${CUPO_COLOR[cs.level]}"></div></div></div>`).join('')}`;
+      m.appendChild(c);
+    }
+  }
+
   const grid=el('div','chart-grid'); m.appendChild(grid);
   grid.appendChild(chartCard('Ingresos vs Gastos por mes','Identifica meses de prima y meses apretados','c1'));
   grid.appendChild(chartCard('Te queda acumulado','Cuánta plata libre generas en el año','c2'));
@@ -3765,6 +3977,9 @@ function renderCharts(){
   grid.appendChild(chartCard('Gasto por rubro en el año','Tus categorías más caras','c4'));
   grid.appendChild(chartCard('Progreso de metas','Viaje, apartamento...','c5'));
   grid.appendChild(chartCard('Evolución de deudas','Saldo pendiente en el tiempo','c6'));
+  // v3.7: en qué se va la plata (gastos hormiga por rubro, año) — solo si hay pagos
+  const hormTotalYear = activeRubros().reduce((a,r)=>a+S.year.months.reduce((s,mm)=>s+rubroItems(mm,r.id).reduce((x,it)=>x+(it.amount||0),0),0),0);
+  if(hormTotalYear>0) grid.appendChild(chartCard('¿En qué se te va la plata? 🐜','Tus gastos hormiga por rubro en el año','c7'));
 
   setTimeout(()=>{ drawAllCharts(); bindChartDownloads(m); },30);
 }
@@ -3821,6 +4036,12 @@ function drawAllCharts(){
   const dlabels=[]; for(let k=0;k<14;k++){const mi=k%12;dlabels.push(MONTH_NAMES[mi].slice(0,3));}
   const dds=S.debts.debts.map(d=>{const am=amortize(d);const data=am.rows.slice(0,14).map(r=>r.balance);while(data.length<14)data.push(0);return {label:d.name,data,borderColor:d.color||'#FF6B6B',backgroundColor:(d.color||'#FF6B6B')+'22',borderWidth:2.5,tension:.3,pointRadius:0,fill:true};});
   CHARTS.push(new Chart($('#c6'),{type:'line',data:{labels:dlabels.slice(0,14),datasets:dds.length?dds:[{label:'Sin deudas',data:[0],borderColor:'#2A2F3D'}]},options:chartOpts()}));
+  // C7 (v3.7): gastos hormiga por rubro en el año, mayor a menor
+  if($('#c7')){
+    const hr=activeRubros().map(r=>({name:r.name,color:r.color,total:S.year.months.reduce((a,mm)=>a+rubroItems(mm,r.id).reduce((s,it)=>s+(it.amount||0),0),0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+    CHARTS.push(new Chart($('#c7'),{type:'bar',data:{labels:hr.map(x=>x.name),datasets:[{label:'Gasto hormiga',data:hr.map(x=>x.total),backgroundColor:hr.map(x=>x.color),borderRadius:4}]},
+      options:{...chartOpts(),indexAxis:'y',plugins:{legend:{display:false},tooltip:tt()}}}));
+  }
 }
 
 /* ===== COMPARAR AÑOS ===== */
