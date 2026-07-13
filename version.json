@@ -1,5 +1,5 @@
 {
-  "version": "3.7",
-  "notas": "Gastos hormiga: registra gasticos por rubro, cupo con semáforo y en qué se te va la plata",
+  "version": "3.8",
+  "notas": "Gastos y comprobantes unificados por rubro, botones más claros y filtro por mes",
   "fecha": "2026-07-12"
 }

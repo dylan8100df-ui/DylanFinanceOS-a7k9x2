@@ -287,10 +287,12 @@ table.sheet tr.total td.mname,table.sheet tr.avg td.mname{background:var(--panel
 /* v3.0: fecha de pago y comprobantes */
 .ci-date{font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:3px 8px;border-radius:20px;white-space:nowrap;cursor:pointer}
 .ci-date:hover{filter:brightness(1.15)}
-/* v3.7: gastos hormiga — pill de aviso de cupo + botón de pagos */
-.cupo-pill{font-size:10.5px;font-weight:800;padding:2px 7px;border:1.5px solid;border-radius:20px;white-space:nowrap;background:transparent}
-.ci-ant{font-size:14px;cursor:pointer;opacity:.55;padding:0 3px;transition:.12s;line-height:1}
-.ci-ant:hover{opacity:1;transform:scale(1.18)}
+/* v3.7: gastos hormiga — pill de cupo (semáforo, relleno) + chip de gastos y comprobantes */
+.cupo-pill{font-size:11px;font-weight:800;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.cupo-pill.warn{color:var(--warn);background:var(--warn-soft)}
+.cupo-pill.over{color:var(--neg);background:var(--neg-soft)}
+.ci-gastos{font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:3px 9px;border-radius:20px;white-space:nowrap;cursor:pointer}
+.ci-gastos:hover{filter:brightness(1.12)}
 .rc-row{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--input);border:1px solid var(--border);border-radius:10px;margin-bottom:7px;flex-wrap:wrap}
 .rc-row .rc-name{font-weight:700;font-size:13px;flex:1;min-width:120px}
 .rc-row .rc-date{font-size:12px;color:var(--text2)}
@@ -691,9 +693,15 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.7';
+const APP_VERSION='3.8';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.8', emoji:'🧾', title:'Gastos y comprobantes, más organizado', items:[
+    '🧾 Un solo lugar por rubro: “Gastos y comprobantes”. Anotas el gasto y, si quieres, le adjuntas el comprobante ahí mismo — ya no hay un botón aparte solo para recibos.',
+    '➕ En Este mes, cada rubro tiene un botón claro “🧾 Agregar gasto” (antes era un iconito). Y puedes adjuntarle el comprobante a un gasto que ya tenías.',
+    '🚦 El aviso de cupo (🟡/🔴) ahora se ve más grande y claro en cada rubro.',
+    '🔎 En Rubros, el botón “Gastos y comprobantes” abre la lista del año y la puedes filtrar por mes.'
+  ]},
   {v:'3.7', emoji:'🐜', title:'Gastos hormiga: en qué se te va la plata', items:[
     '🐜 Gastos hormiga: dentro de cada rubro puedes anotar los gasticos pequeños (café, mercado, papas…) con concepto, monto y comprobante opcional. La suma se vuelve el gasto real de ese rubro.',
     '🚦 Cupo con semáforo: tu presupuesto pasa a ser un tope. Te avisa en Este mes cuando un rubro va cerca (🟡) o se pasó (🔴).',
@@ -1800,22 +1808,31 @@ window.editReceiptModal=(cm, rid, rc)=>{
     await saveYear(); toast('Comprobante actualizado'); payDetailModal(cm, rid);
   };
 };
-// Vista por rubro: todos los comprobantes del año, ordenados por fecha
-window.rubroReceipts=(rid)=>{
+// Vista por rubro: gastos y comprobantes del año, con filtro por mes (v3.7).
+window.rubroReceipts=(rid, selMes)=>{
   const r=S.config.rubros.find(x=>x.id===rid);
-  const items=[];
-  S.year.months.forEach((md,mi)=>{ ((md.receipts&&md.receipts[rid])||[]).forEach(rc=>items.push({mi,rc})); });
-  items.sort((a,b)=> String(a.rc.date).localeCompare(String(b.rc.date)));
-  openModal(`<h2>${esc(r?r.name:'Rubro')} · comprobantes ${S.config.activeYear} 🧾</h2>
-    <div class="msub">${items.length? items.length+' comprobante(s) este año, ordenados por fecha de pago.':'Sin comprobantes este año. Agrégalos desde Este mes: marca el rubro y toca su fecha 📅.'}</div>
-    ${items.map(({mi,rc})=>`<div class="rc-row"><span>🧾</span><span class="rc-name">${esc(rc.name)}</span><span class="rc-date">${MONTH_NAMES[mi]} · pagado ${fmtPayDate(rc.date)}</span>
-      <button class="btn sm" data-rrv="${rc.id}" data-mi="${mi}">Ver</button><button class="btn sm icon" data-rre="${rc.id}" data-mi="${mi}" title="Editar">${icoEdit}</button><button class="btn sm icon danger" data-rrd="${rc.id}" data-mi="${mi}" title="Eliminar">${icoTrash}</button></div>`).join('')}
+  const rows=[]; // {mi, kind:'pago'|'rec', p?|rc?}
+  S.year.months.forEach((md,mi)=>{
+    rubroItems(md,rid).forEach(p=>rows.push({mi, kind:'pago', p}));
+    ((md.receipts&&md.receipts[rid])||[]).forEach(rc=>rows.push({mi, kind:'rec', rc}));
+  });
+  const sel=(selMes==null||selMes==='')?'':String(selMes);
+  const list=(sel==='')?rows:rows.filter(x=>String(x.mi)===sel);
+  list.sort((a,b)=> a.mi-b.mi || String((a.p||a.rc).date).localeCompare(String((b.p||b.rc).date)));
+  const nPagos=list.filter(x=>x.kind==='pago').length, nRec=list.filter(x=>x.kind==='rec').length;
+  const total=list.filter(x=>x.kind==='pago').reduce((s,x)=>s+(x.p.amount||0),0);
+  openModal(`<h2>${esc(r?r.name:'Rubro')} · gastos y comprobantes ${S.config.activeYear} 🧾</h2>
+    <div class="msub">Todos los gastos (y sus comprobantes) de este rubro en el año. Filtra por mes si quieres.</div>
+    <div class="field" style="max-width:240px"><label>Filtrar por mes</label><select id="rr-mes"><option value="">Todos los meses</option>${MONTH_NAMES.map((n,i)=>`<option value="${i}" ${sel===String(i)?'selected':''}>${n}</option>`).join('')}</select></div>
+    ${list.length?`<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${nPagos} gasto(s)${total>0?' · '+COP(total):''}${nRec?' · '+nRec+' comprobante(s) suelto(s)':''}</div>`:''}
+    ${list.length? list.map(x=> x.kind==='pago'
+      ? `<div class="rc-row"><span>🐜</span><span class="rc-name">${esc(x.p.label)}${x.p.receipt?' 🧾':''}</span><span class="rc-date">${MONTH_NAMES[x.mi]} · ${fmtPayDate(x.p.date)}</span><span style="font-weight:700;margin-left:auto">${COP(x.p.amount)}</span>${x.p.receipt?`<button class="btn sm" data-pv="${x.mi}|${x.p.id}">🧾 Ver</button>`:''}</div>`
+      : `<div class="rc-row"><span>🧾</span><span class="rc-name">${esc(x.rc.name)}</span><span class="rc-date">${MONTH_NAMES[x.mi]} · ${fmtPayDate(x.rc.date)}</span><button class="btn sm" data-rv="${x.mi}|${x.rc.id}">Ver</button></div>`
+    ).join('') : '<div style="font-size:12.5px;color:var(--text3)">Sin gastos ni comprobantes'+(sel!==''?' en '+MONTH_NAMES[+sel]:' este año')+'. Agrégalos desde Este mes: toca 🧾 en un rubro.</div>'}
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cerrar</button></div>`,{wide:true});
-  const find=(mi,id)=>((S.year.months[mi].receipts||{})[rid]||[]).find(x=>x.id===id);
-  document.querySelectorAll('[data-rrv]').forEach(b=>b.onclick=()=>{ const rc=find(+b.dataset.mi,b.dataset.rrv); if(rc) viewReceipt(rc); });
-  document.querySelectorAll('[data-rre]').forEach(b=>b.onclick=()=>{ const rc=find(+b.dataset.mi,b.dataset.rre); if(rc) editReceiptModal(+b.dataset.mi, rid, rc); });
-  document.querySelectorAll('[data-rrd]').forEach(b=>b.onclick=()=>{ const rc=find(+b.dataset.mi,b.dataset.rrd); if(!rc)return;
-    confirmModal('¿Eliminar comprobante?','Se borrará "'+esc(rc.name)+'" y su imagen definitivamente.', async()=>{ await deleteReceipt(+b.dataset.mi,rid,rc.id); toast('Comprobante eliminado'); rubroReceipts(rid); }); });
+  $('#rr-mes').onchange=e=>rubroReceipts(rid, e.target.value);
+  document.querySelectorAll('[data-pv]').forEach(b=>b.onclick=()=>{ const [mi,pid]=b.dataset.pv.split('|'); const p=rubroItems(S.year.months[+mi],rid).find(x=>x.id===pid); if(p&&p.receipt) viewReceipt(p.receipt); });
+  document.querySelectorAll('[data-rv]').forEach(b=>b.onclick=()=>{ const [mi,rcid]=b.dataset.rv.split('|'); const rc=((S.year.months[+mi].receipts||{})[rid]||[]).find(x=>x.id===rcid); if(rc) viewReceipt(rc); });
 };
 /* ===== v3.7: GASTOS HORMIGA 🐜 =====
    Pagos itemizados dentro de un rubro (café, papas, mercado...). La SUMA de los
@@ -1865,12 +1882,16 @@ async function deletePago(mi, rid, pagoId){
   syncRubroReal(md, rid);
   await saveYear();
 }
-// Modal por rubro: cupo + lista de pagos + agregar pago (con comprobante opcional).
+// Modal unificado "Gastos y comprobantes" de un rubro-mes: cupo + fecha de pago +
+// gastos (cada uno con comprobante opcional) + comprobantes heredados + agregar gasto.
+// v3.7 unificó aquí lo que antes era el detalle de pago/comprobantes por separado.
 window.rubroPagosModal=(cm, rid)=>{
   const md=S.year.months[cm];
   const r=S.config.rubros.find(x=>x.id===rid);
   const items=rubroItems(md,rid).slice().sort((a,b)=>(b.amount||0)-(a.amount||0));
+  const recs=(md.receipts&&md.receipts[rid])||[]; // comprobantes heredados (sin gasto asociado)
   const cs=cupoState(md, r||{id:rid});
+  const payAt=(md.paidAt&&md.paidAt[rid])||'';
   const today=new Date().toISOString().slice(0,10);
   let bar='';
   if(cs){
@@ -1883,37 +1904,59 @@ window.rubroPagosModal=(cm, rid)=>{
       <div class="progress"><div class="fill" style="width:${Math.min(100,cs.pct*100)}%;background:${CUPO_COLOR[cs.level]}"></div></div>
       <div style="font-size:12px;color:var(--text2);margin-top:5px">${msg}</div></div>`;
   }
-  openModal(`<h2>${esc(r?r.name:'Rubro')} · pagos de ${MONTH_NAMES[cm]} 🐜</h2>
-    <div class="msub">Anota cada gastico (café, mercado, papas...). La suma es tu gasto real de este rubro${Crypto.key?' · 🔐 comprobantes cifrados':''}.</div>
+  openModal(`<h2>${esc(r?r.name:'Rubro')} · ${MONTH_NAMES[cm]} 🧾</h2>
+    <div class="msub">Anota cada gasto (café, mercado, arriendo...) y, si quieres, adjúntale su comprobante. La suma es tu gasto real del rubro${Crypto.key?' · 🔐 cifrado':''}.</div>
     ${bar}
-    <div class="section-label">Pagos (${items.length})</div>
-    ${items.length? items.map(p=>`<div class="rc-row"><span>🐜</span><span class="rc-name">${esc(p.label)}${p.receipt?' 🧾':''}</span><span class="rc-date">${fmtPayDate(p.date)}</span><span style="font-weight:700;margin-left:auto">${COP(p.amount)}</span>
-      ${p.receipt?`<button class="btn sm" data-pgv="${p.id}">Ver</button>`:''}<button class="btn sm icon danger" data-pgd="${p.id}" title="Eliminar">${icoTrash}</button></div>`).join('')
-      :'<div style="font-size:12.5px;color:var(--text3);margin-bottom:4px">Aún no hay pagos en este rubro. Agrega el primero 👇</div>'}
-    <div class="section-label">Agregar pago</div>
+    <div class="field"><label>Fecha en que pagaste <span style="color:var(--text3)">(opcional)</span></label><input id="pdt-date" type="date" value="${payAt}"></div>
+    <div class="section-label">Gastos (${items.length})</div>
+    ${items.length? items.map(p=>`<div class="rc-row"><span class="rc-name">${esc(p.label)}</span><span class="rc-date">${fmtPayDate(p.date)}</span><span style="font-weight:700;margin-left:auto">${COP(p.amount)}</span>
+      ${p.receipt?`<button class="btn sm" data-pgv="${p.id}">🧾 Ver</button>`:`<button class="btn sm" data-pgatt="${p.id}">📎 Comprobante</button>`}<button class="btn sm icon danger" data-pgd="${p.id}" title="Eliminar gasto">${icoTrash}</button></div>`).join('')
+      :'<div style="font-size:12.5px;color:var(--text3);margin-bottom:4px">Aún no hay gastos en este rubro. Agrega el primero 👇</div>'}
+    ${recs.length?`<div class="section-label">Comprobantes guardados (${recs.length})</div>
+    <div style="font-size:11.5px;color:var(--text3);margin-bottom:6px">Recibos que guardaste sin un gasto asociado.</div>
+    ${recs.map(rc=>`<div class="rc-row"><span>🧾</span><span class="rc-name">${esc(rc.name)}</span><span class="rc-date">${fmtPayDate(rc.date)}</span>
+      <button class="btn sm" data-rcv="${rc.id}">Ver</button><button class="btn sm icon" data-rce="${rc.id}" title="Editar">${icoEdit}</button><button class="btn sm icon danger" data-rcd="${rc.id}" title="Eliminar">${icoTrash}</button></div>`).join('')}`:''}
+    <div class="section-label">Agregar gasto</div>
     <div class="form-grid">
-      <div class="field"><label>¿En qué?</label><input id="pg-lbl" placeholder="Café, mercado, taxi..."></div>
+      <div class="field"><label>¿En qué?</label><input id="pg-lbl" placeholder="Café, mercado, arriendo..."></div>
       <div class="field"><label>Monto</label><input id="pg-amt" type="text" inputmode="numeric" class="money" placeholder="0"></div>
       <div class="field"><label>Fecha</label><input id="pg-date" type="date" value="${today}"></div>
     </div>
     <div class="field"><label>Comprobante <span style="color:var(--text3)">(opcional)</span></label><input id="pg-file" type="file" accept="image/*"></div>
-    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn pos" id="pg-add">🐜 Agregar pago</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn pos" id="pg-add">🐜 Agregar gasto</button></div>`);
+  const refresh=()=>{ rubroPagosModal(cm, rid); if(S.view==='dashboard') renderMonth(cm); else if(S.view==='hormiga') renderHormiga(); };
+  $('#pdt-date').onchange=async e=>{ if(!e.target.value)return; if(!md.paidAt)md.paidAt={}; md.paidAt[rid]=e.target.value; await saveYear(); toast('Fecha del pago actualizada 📅'); };
   $('#pg-add').onclick=async()=>{
     const amt=moneyNum($('#pg-amt').value);
-    if(!amt){ toast('Pon el monto del pago'); $('#pg-amt').focus(); return; }
-    const lbl=$('#pg-lbl').value.trim()||'Pago';
+    if(!amt){ toast('Pon el monto del gasto'); $('#pg-amt').focus(); return; }
+    const lbl=$('#pg-lbl').value.trim()||'Gasto';
     const b=$('#pg-add'); b.disabled=true; b.textContent='Guardando…';
     const f=$('#pg-file').files && $('#pg-file').files[0];
     let u8=null,type=null; if(f){ const s=await shrinkImage(f); u8=s.u8; type=s.type; }
     await addPago(cm, rid, lbl, amt, $('#pg-date').value, u8, type);
-    toast('Pago agregado 🐜');
-    rubroPagosModal(cm, rid);
-    if(S.view==='dashboard') renderMonth(cm); else if(S.view==='hormiga') renderHormiga();
+    toast('Gasto agregado 🐜'); refresh();
   };
   document.querySelectorAll('[data-pgv]').forEach(btn=>btn.onclick=()=>{ const p=items.find(x=>x.id===btn.dataset.pgv); if(p&&p.receipt) viewReceipt(p.receipt); });
+  document.querySelectorAll('[data-pgatt]').forEach(btn=>btn.onclick=()=>{ const pid=btn.dataset.pgatt;
+    const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+    inp.onchange=async()=>{ const f=inp.files&&inp.files[0]; if(!f)return; const s=await shrinkImage(f); await attachPagoReceipt(cm,rid,pid,s.u8,s.type); toast('Comprobante adjuntado 🧾'); refresh(); };
+    inp.click(); });
   document.querySelectorAll('[data-pgd]').forEach(btn=>btn.onclick=()=>{ const p=items.find(x=>x.id===btn.dataset.pgd); if(!p)return;
-    confirmModal('¿Eliminar pago?','Se borrará "'+esc(p.label)+'" ('+COP(p.amount)+')'+(p.receipt?' y su comprobante':'')+'.', async()=>{ await deletePago(cm,rid,p.id); toast('Pago eliminado'); rubroPagosModal(cm,rid); if(S.view==='dashboard') renderMonth(cm); else if(S.view==='hormiga') renderHormiga(); }); });
+    confirmModal('¿Eliminar gasto?','Se borrará "'+esc(p.label)+'" ('+COP(p.amount)+')'+(p.receipt?' y su comprobante':'')+'.', async()=>{ await deletePago(cm,rid,p.id); toast('Gasto eliminado'); refresh(); }); });
+  document.querySelectorAll('[data-rcv]').forEach(b=>b.onclick=()=>{ const rc=recs.find(x=>x.id===b.dataset.rcv); if(rc) viewReceipt(rc); });
+  document.querySelectorAll('[data-rce]').forEach(b=>b.onclick=()=>{ const rc=recs.find(x=>x.id===b.dataset.rce); if(rc) editReceiptModal(cm, rid, rc); });
+  document.querySelectorAll('[data-rcd]').forEach(b=>b.onclick=()=>{ const rc=recs.find(x=>x.id===b.dataset.rcd); if(!rc)return;
+    confirmModal('¿Eliminar comprobante?','Se borrará "'+esc(rc.name)+'" y su imagen definitivamente.', async()=>{ await deleteReceipt(cm,rid,rc.id); toast('Comprobante eliminado'); refresh(); }); });
 };
+window.payDetailModal=window.rubroPagosModal; // el detalle de pago/comprobantes se unificó aquí
+async function attachPagoReceipt(mi, rid, pagoId, u8, type){
+  const md=S.year.months[mi]; const arr=(md.expenses[rid]&&md.expenses[rid].items)||[];
+  const p=arr.find(x=>x.id===pagoId); if(!p)return;
+  const file=pagoId+'.'+(((type||'').includes('png'))?'png':'jpg');
+  await Store.fileWrite('comprobantes/'+S.config.activeYear+'/'+file, u8);
+  p.receipt={name:p.label, date:p.date, file, type:type||'image/jpeg'};
+  await saveYear();
+}
 function debtDoneThisMonth(d, yr, mi){ return (d.payments||[]).some(p=>p.year===yr&&p.month===mi+1); }
 function toggleDebtMonth(d, yr, mi){
   const has=debtDoneThisMonth(d,yr,mi);
@@ -2121,19 +2164,19 @@ function renderMonth(cm){
   const renderItem=(it)=>{
     const row=el('div','check-item'+(it.done?' done':''));
     row.dataset.kind=it.kind; row.dataset.id=it.id;
-    // v3.0: fecha del pago (y acceso a comprobantes) en rubros pagados
-    const payAt = it.kind==='rubro' && it.done && md.paidAt ? md.paidAt[it.id] : null;
+    // v3.7: aviso de cupo (solo warning/over, para no ensuciar los rubros simples)
+    const nPagos = it.kind==='rubro' ? rubroItems(md, it.id).length : 0;
     const nRec = it.kind==='rubro' && md.receipts && md.receipts[it.id] ? md.receipts[it.id].length : 0;
-    // v3.7: aviso de cupo (solo warning/over, para no ensuciar los rubros simples) + acceso a pagos hormiga
     const rObj = it.kind==='rubro' ? rubros.find(x=>x.id===it.id) : null;
     const cs = rObj ? cupoState(md, rObj) : null;
-    const pill = (cs && cs.level!=='ok') ? `<span class="cupo-pill" style="color:${CUPO_COLOR[cs.level]};border-color:${CUPO_COLOR[cs.level]}" title="Gastado ${COP(cs.spent)} de ${cs.budget>0?COP(cs.budget):'—'}">${cs.level==='over'?'🔴':'🟡'} ${(cs.pct*100).toFixed(0)}%</span>` : '';
+    const pill = (cs && cs.level!=='ok') ? `<span class="cupo-pill ${cs.level}" title="Gastado ${COP(cs.spent)} de ${cs.budget>0?COP(cs.budget):'—'}">${cs.level==='over'?'🔴':'🟡'} ${(cs.pct*100).toFixed(0)}%</span>` : '';
+    // v3.7: un solo chip "Gastos y comprobantes" (reemplaza 📅 fecha y 🐜 pagos)
+    const gastosChip = it.kind==='rubro' ? `<span class="ci-gastos" data-pay="${it.id}" data-pago="${it.id}" title="Gastos y comprobantes de este rubro">🧾 ${nPagos>0?nPagos+' gasto'+(nPagos!==1?'s':''):'Agregar gasto'}${nRec?' +'+nRec:''}</span>` : '';
     row.innerHTML=`<div class="check-box">${icoCheck}</div>
       <span class="ci-swatch" style="background:${it.color}"></span>
       <span class="ci-name">${esc(it.name)}</span>
-      ${it.kind==='rubro'&&it.done?`<span class="ci-date" data-pay="${it.id}" title="Fecha del pago y comprobantes — toca para editar">📅 ${payAt?fmtPayDate(payAt):'sin fecha'}${nRec?' · 🧾'+nRec:''}</span>`:''}
       ${pill}
-      ${it.kind==='rubro'?`<span class="ci-ant" data-pago="${it.id}" title="Pagos de este rubro (gastos hormiga 🐜)">🐜</span>`:''}
+      ${gastosChip}
       <span class="ci-tag">${esc(it.tag)}</span>
       <span class="ci-amt">${COP(it.amount)}</span>`;
     list.appendChild(row);
@@ -3738,7 +3781,7 @@ function renderRubros(){
       <span class="lname" style="${r.active?(hiddenY?'opacity:.55':''):'opacity:.45;text-decoration:line-through'}">${esc(r.name)}${hiddenY&&r.active?' <span class="chip" style="margin-left:6px">oculto en '+y+'</span>':''}</span>
       <span class="chip">${r.type}</span>
       <span class="lmeta">${COP(r.def)}/mes</span>
-      ${r.active?`<button class="btn sm icon" onclick="rubroReceipts('${r.id}')" title="Comprobantes de pago de este rubro en ${y}">🧾</button>`:''}
+      ${r.active?`<button class="btn sm" onclick="rubroReceipts('${r.id}')" title="Gastos y comprobantes de este rubro en ${y}">🧾 Gastos y comprobantes</button>`:''}
       ${r.active?`<button class="btn sm" onclick="toggleRubroYear('${r.id}')" title="${hiddenY?'Volver a mostrar este rubro en '+y:'Ocultarlo solo en '+y+(hasData?' (tiene datos este año: no se borran)':'')}">👁 ${hiddenY?'Mostrar en '+y:'Ocultar en '+y}</button>`:''}
       <button class="btn sm" onclick="toggleRubro('${r.id}')">${r.active?'Ocultar en todos':'Activar'}</button>
       <button class="btn sm icon" onclick="rubroModal('${r.id}')" title="Editar rubro">${icoEdit}</button>
@@ -4300,7 +4343,7 @@ function setTabGuia(m){
     <div class="section-label">Para qué sirve cada parte</div>
     <div class="guide-cols">
     <div>
-      ${row(icoCheck,'Este mes','Marcas lo pagado, guardas su fecha 📅 y su comprobante 🧾, y ves cuánto te queda libre.')}
+      ${row(icoCheck,'Este mes','Marcas lo pagado y, en cada rubro, anotas tus gastos (con comprobante opcional 🧾); ves si te acercas al tope y cuánto te queda libre.')}
       ${row(icoList,'Hoja del Año','Tu presupuesto mes a mes; Saldo Banco vs Te queda = desfase.')}
       ${row(icoPig,'Ahorros y Proyectos','Metas con aportes y simulador de cuándo llegas.')}
       ${row(icoCard,'Deudas y Créditos','Créditos y tarjetas: intereses, cuotas y simulador de abonos.')}
@@ -4309,8 +4352,9 @@ function setTabGuia(m){
     <div>
       ${row(icoBank,'Patrimonio Neto','Lo que tienes menos lo que debes, mes a mes.')}
       ${row(icoTax,'Declaración de Renta','Topes DIAN en UVT y estimador del impuesto.')}
-      ${row(icoList,'Rubros','Tus categorías de gasto, por año y con filtros; el 🧾 reúne sus comprobantes.')}
-      ${row(icoTrend,'Gráficas','El año en imágenes + comparar años.')}
+      ${row(icoList,'Rubros','Tus categorías de gasto, por año y con filtros; el botón 🧾 reúne sus gastos y comprobantes del año, filtrables por mes.')}
+      ${row(icoList,'Gastos hormiga 🐜','En qué se te va la plata de a poquitos, con cupo por rubro (opcional; se esconde en Modo sencillo).')}
+      ${row(icoTrend,'Gráficas','El año en imágenes: en qué se te va la plata, cupos apretados y comparar años.')}
       ${row(icoInfo,'¿Dudas en una vista?','Toca el botón flotante ? para el tour de esa pantalla.')}
     </div>
     </div>
@@ -4586,7 +4630,7 @@ function attachEyes(scope){
 /* ===== v2.4: TOUR GUIADO ===== */
 const TOUR_STEPS=[
   {sel:'.brand',t:'¡Hola! 👋',p:'Este es tu Finance OS: todo vive en tu equipo, nada se sube a internet. Déjame mostrarte el mapa en un minuto.'},
-  {sel:'[data-view="dashboard"]',t:'Este mes ✅',p:'Tu día a día: marca en verde lo que ya pagaste y mira cuánto te queda libre de verdad. Cada gasto que marcas guarda su fecha 📅 y puedes adjuntarle el comprobante 🧾 (foto del recibo). Aquí también anotas ingresos extra y tu saldo en banco.'},
+  {sel:'[data-view="dashboard"]',t:'Este mes ✅',p:'Tu día a día: marca en verde lo que ya pagaste y mira cuánto te queda libre de verdad. En cada rubro anotas tus gastos (café, mercado...) con comprobante opcional 🧾, y ves si te acercas al tope del presupuesto. Aquí también registras ingresos extra y tu saldo en banco.'},
   {sel:'[data-view="sheet"]',t:'Hoja del Año 📋',p:'Tu presupuesto mes a mes: toca cualquier celda y edítala, se guarda sola. El Desfase compara tu banco real con lo que debería quedarte, y cada mes tiene su nota 📝 para apuntar qué pasó.'},
   {sel:'[data-view="rubros"]',t:'Rubros 🏷️',p:'Tus categorías de gasto (transporte, mercado, gym...): son las columnas de la Hoja. Puedes ocultarlas por año y filtrarlas cuando se acumulen.'},
   {sel:'[data-view="savings"]',t:'Ahorros y Proyectos 🎯',p:'Crea metas (viaje, apartamento...), registra tus aportes y la app te dice cuándo llegas — incluso con rentabilidad.'},
@@ -4603,7 +4647,7 @@ const VIEW_TOURS={
     {sel:'.page-head',t:'Este mes ✅',p:'Elige el año y el mes con los selectores o las flechas ‹ ›. Todo lo de abajo es de ese mes.'},
     {sel:'.month-hero',t:'Tu resumen honesto',p:'“Te queda libre” ya descuenta gastos, ahorro y deudas. Con los botones registras ingresos extra y tu saldo real en banco.'},
     {sel:'.checklist',t:'Marca lo pagado',p:'Toca cada fila cuando la pagues: se pone verde, tu avance sube y el gasto real se registra solo. Al marcar un gasto queda guardada la fecha del pago.'},
-    {sel:'.ci-date',t:'Fecha y comprobante 🧾',p:'En cada gasto pagado aparece este chip 📅 con la fecha. Tócalo para corregirla y para adjuntar el comprobante (foto del recibo): guardas varios, les pones nombre y fecha, y luego los ves, editas o borras. Si tienes contraseña, se guardan cifrados 🔐.'},
+    {sel:'.ci-gastos',t:'Gastos y comprobantes 🧾',p:'En cada rubro, este chip abre sus gastos: anota los gasticos del día (café, mercado...) con su monto y, si quieres, la foto del comprobante 🧾. La suma es tu gasto real del rubro. Ahí mismo ves si te acercas al tope del presupuesto (🟡/🔴). Con contraseña, todo va cifrado 🔐.'},
     {sel:'.progress',t:'Avance del mes',p:'La barra te dice cuánto del mes ya está pago. ¡Llegar al 100% se siente bien! 🎉'}],
   sheet:[
     {sel:'.page-head',t:'Hoja del Año 📋',p:'Tu presupuesto completo. Con 📋/🧾 cambias entre lo planeado y lo que de verdad gastaste; con + Año creas otro año.'},
@@ -4631,10 +4675,13 @@ const VIEW_TOURS={
   rubros:[
     {sel:'.page-head',t:'Rubros 🏷️',p:'Tus categorías de gasto: son las columnas de la Hoja del Año.'},
     {sel:'#rf-tipo',t:'Filtros',p:'Cuando se acumulen rubros, filtra por tipo o estado (visibles, ocultos en el año, desactivados).'},
-    {sel:'.lrow',t:'Por año o global',p:'“👁 Ocultar en <año>” lo quita solo de ese año sin borrar datos; “Ocultar en todos” lo apaga global. El botón 🧾 reúne todos los comprobantes de ese rubro en el año, ordenados por fecha de pago: verlos, renombrarlos o borrarlos.'}],
+    {sel:'.lrow',t:'Por año o global',p:'“👁 Ocultar en <año>” lo quita solo de ese año sin borrar datos; “Ocultar en todos” lo apaga global. El botón 🧾 “Gastos y comprobantes” reúne todos los gastos de ese rubro en el año (con sus comprobantes) y los puedes filtrar por mes.'}],
+  hormiga:[
+    {sel:'.page-head',t:'Gastos hormiga 🐜',p:'En qué se te va la plata de a poquitos. Cambia de mes con las flechas ‹ ›. (Si no la usas, apágala en Configuración → Perfil → Modo sencillo.)'},
+    {sel:'.card',t:'Rubro por rubro',p:'Cada rubro con gastos muestra cuánto llevas vs tu cupo (verde/ámbar/rojo) y sus pagos más grandes. “🐜 Ver / agregar” abre el detalle para anotar más. Abajo, tus mayores fugas del mes y el resumen del año.'}],
   charts:[
     {sel:'.page-head',t:'Gráficas 📊',p:'Tu año en imágenes. Si registraste gastos reales, aparece la barra de comparación contra el plan.'},
-    {sel:'.chart-card',t:'Explora',p:'Ingresos vs gastos, acumulado, dona por rubro, ahorro y deudas. Y arriba puedes comparar años completos.'}],
+    {sel:'.chart-card',t:'Explora',p:'Ingresos vs gastos, acumulado, dona por rubro, ahorro y deudas — y “¿en qué se te va la plata?” con tus gastos hormiga. Arriba puedes comparar años completos.'}],
   settings:[
     {sel:'[data-stab="perfil"]',t:'Configuración ⚙️',p:'Todo organizado en pestañas: Perfil, Seguridad y backup, Notas del año y la Guía.'},
     {sel:'[data-clv]',t:'Novedades',p:'Estos chips abren el parche de cada versión: qué llegó nuevo y cuándo.'},
