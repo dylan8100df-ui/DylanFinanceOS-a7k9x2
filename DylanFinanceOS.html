@@ -699,9 +699,13 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='4.1';
+const APP_VERSION='4.2';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'4.2', emoji:'⏰', title:'Recordatorio de pago de la tarjeta y tutoriales al día', items:[
+    '⏰ Si tu tarjeta tiene día de pago, ahora también te aparece en “Próximos vencimientos” de Este mes — igual que los rubros y las deudas.',
+    '📚 Repasé y actualicé las guías de toda la app para que todo quede bien explicado: las dos formas de registrar gastos, el botón ⚡ de registro rápido, el color del tema y las fechas de corte/pago.'
+  ]},
   {v:'4.1', emoji:'💳', title:'Fecha de corte y pago de la tarjeta (y día de pago en deudas)', items:[
     '💳 Ponle a tu tarjeta su día de corte y su día de pago. Al registrar una compra, la app calcula sola en qué mes empieza la primera cuota según la fecha en que compraste.',
     '🗓️ Ejemplo: si tu corte es el 15 y compras el 20, esa compra “se pasa” al siguiente corte y la primera cuota cae un mes después — sin que tengas que pensarlo (igual lo puedes ajustar).',
@@ -1556,10 +1560,22 @@ function upcomingDues(cm){
   // v4.1: deudas con día de pago que aún no se pagan este mes
   (S.debts.debts||[]).forEach(dt=>{
     const day=dt.dueDay; if(!day) return;
+    if(dt.cardId) return;                                    // las compras de tarjeta se avisan por la tarjeta
     if(debtPaidInterest(dt).balance<=1) return;              // ya saldada
     if(debtDoneThisMonth(dt, todayYear(), cm)) return;       // ya pagada este mes
     const d=Math.min(day, dim);
     out.push({name:'Cuota · '+dt.name, color:dt.color||'#FF6B6B', day:d, diff:d-dnow, amount:dt.monthlyPayment||0});
+  });
+  // v4.2: tarjetas con día de pago y compras activas YA en curso (cuota combinada del mes)
+  const nowN=todayYear()*12+cm;
+  (S.debts.cards||[]).forEach(cd=>{
+    const day=cd.fechaPago; if(!day) return;
+    const act=cardDebts(cd.id).filter(x=>debtPaidInterest(x).balance>1 && (x.startYear*12+(x.startMonth-1))<=nowN);
+    if(!act.length) return;                                  // no hay cuota que pagar este mes
+    if(act.every(x=>debtDoneThisMonth(x, todayYear(), cm))) return; // ya pagaste todas este mes
+    const cuota=act.reduce((s,x)=>s+(x.monthlyPayment||0),0)+(cd.fee||0)+(cd.seguro||0);
+    const d=Math.min(day, dim);
+    out.push({name:'Tarjeta · '+cd.name, color:'#6C63FF', day:d, diff:d-dnow, amount:cuota});
   });
   return out.sort((a,b)=>a.diff-b.diff);
 }
@@ -4443,7 +4459,7 @@ function setTabGuia(m){
       <b class="pos-t">Te queda</b> = ingresos + extra − gastos − ahorro − deudas. <span style="color:var(--text2)">La plata que ahorras no se pierde, pero sí sale de tu bolsillo este mes.</span>
     </div>
     <div style="background:var(--primary-soft);border:1px solid var(--primary);border-radius:12px;padding:11px 14px;font-size:13px;line-height:1.5;margin:8px 0 4px">
-      <b style="color:var(--primary)">Fechas de pago y comprobantes 🧾</b> <span style="color:var(--text2)">En <b>Este mes</b>, cuando marcas un gasto como pagado aparece un chip con la <b>fecha</b> 📅. Tócalo para corregir la fecha o <b>adjuntar el comprobante</b> (foto del recibo): puedes guardar varios por gasto, con nombre y fecha, y luego verlos, editarlos o borrarlos. Desde <b>Rubros</b>, el botón 🧾 reúne todos los del año. Se organizan solos en <code>comprobantes/&lt;año&gt;</code> y, si tienes contraseña, quedan cifrados 🔐. Para respaldar también las fotos usa el <b>Backup completo (.zip)</b> en Seguridad — el .json no las incluye.</span>
+      <b style="color:var(--primary)">Dos formas de registrar tu gasto 🧾</b> <span style="color:var(--text2)">En <b>Este mes</b>, cada rubro tiene un chip <b>🧾 Gastos</b>. Puedes: <b>(1)</b> marcar el rubro como <b>pagado</b> y se usa el valor del presupuesto, <b>o (2)</b> abrir el chip y <b>anotar tus pagos</b> uno por uno (café, mercado...) — ahí el rubro se vuelve un <b>cupo</b> y la suma es tu gasto real. <b>No se suman entre sí</b>: elige la que te sirva. A cada pago puedes adjuntarle su <b>comprobante</b> (foto del recibo, opcional). Desde <b>Rubros</b>, el botón “Gastos y comprobantes” reúne los del año, filtrables por mes. Todo se guarda en <code>comprobantes/&lt;año&gt;</code> y, con contraseña, cifrado 🔐. Para respaldar también las fotos usa el <b>Backup completo (.zip)</b> — el .json no las incluye.</span>
     </div>
     <div class="section-label">Para qué sirve cada parte</div>
     <div class="guide-cols">
@@ -4460,7 +4476,8 @@ function setTabGuia(m){
       ${row(icoList,'Rubros','Tus categorías de gasto, por año y con filtros; el botón 🧾 reúne sus gastos y comprobantes del año, filtrables por mes.')}
       ${row(icoList,'Gastos hormiga 🐜','En qué se te va la plata de a poquitos, con cupo por rubro (opcional; se esconde en Modo sencillo).')}
       ${row(icoTrend,'Gráficas','El año en imágenes: en qué se te va la plata, cupos apretados y comparar años.')}
-      ${row(icoInfo,'¿Dudas en una vista?','Toca el botón flotante ? para el tour de esa pantalla.')}
+      ${row(icoMoney,'Registro rápido ⚡','El botón + flotante anota en un toque: un gasto, un gasto hormiga 🐜, un ingreso extra, un aporte a meta o un pago de deuda.')}
+      ${row(icoInfo,'Personaliza 🎨','En Configuración → Perfil eliges el color del tema y el Modo sencillo (esconde las vistas que no uses). El botón ? flotante abre la guía de cada pantalla.')}
     </div>
     </div>
     <div style="text-align:center;margin-top:12px;font-size:12.5px;color:var(--text2)">Creada con 💜 por <b style="color:var(--text)">Dylan</b></div>`;
@@ -4745,16 +4762,18 @@ const TOUR_STEPS=[
   {sel:'[data-view="patrimonio"]',t:'Patrimonio Neto 🏛️',p:'Tu foto financiera completa: lo que tienes (banco + metas + invertido) menos lo que debes, y cómo evoluciona mes a mes.'},
   {sel:'[data-view="renta"]',t:'Declaración de Renta 🇨🇴',p:'Revisa si te toca declarar (topes DIAN en UVT) y estima cuánto saldría. Se alimenta de tus propios datos de la app.'},
   {sel:'[data-view="charts"]',t:'Gráficas 📈',p:'Tu año entero en imágenes: en qué se va la plata, cómo vas, y la comparación entre años para ver tu crecimiento.'},
-  {sel:'[data-view="settings"]',t:'Configuración ⚙️',p:'La guía completa, tus notas del año, contraseña con cifrado real y el backup. Consejo de oro: exporta backup seguido 💾. Repite este recorrido cuando quieras con 🧭 Guía.'}
+  {sel:'[data-view="settings"]',t:'Configuración ⚙️',p:'La guía completa, tus notas del año, el color del tema 🎨, contraseña con cifrado real y el backup. Consejo de oro: exporta backup seguido 💾. Repite este recorrido con 🧭 Guía.'},
+  {sel:'#quick-add',t:'Dos botones siempre a la mano',p:'El + es el registro rápido ⚡: anota un gasto, un ingreso extra, un aporte o un pago en un toque. Y el ? (arriba) abre la guía de la pantalla en la que estés. ¡Eso es todo — a organizar tu plata! 💜'}
 ];
 /* Guías por vista (v2.5): el botón flotante ? corre el tour de esa pantalla */
 const VIEW_TOURS={
   dashboard:[
     {sel:'.page-head',t:'Este mes ✅',p:'Elige el año y el mes con los selectores o las flechas ‹ ›. Todo lo de abajo es de ese mes.'},
     {sel:'.month-hero',t:'Tu resumen honesto',p:'“Te queda libre” ya descuenta gastos, ahorro y deudas. Con los botones registras ingresos extra y tu saldo real en banco.'},
-    {sel:'.checklist',t:'Marca lo pagado',p:'Toca cada fila cuando la pagues: se pone verde, tu avance sube y el gasto real se registra solo. Al marcar un gasto queda guardada la fecha del pago.'},
+    {sel:'.checklist',t:'Marca lo pagado',p:'Toca una fila cuando la pagues: se pone verde y se registra como gasto real (usa el valor del presupuesto). O, si prefieres el detalle, abre el chip 🧾 del rubro y anota tus pagos uno por uno — el rubro se vuelve un cupo. Elige una: no se suman entre sí.'},
     {sel:'.ci-gastos',t:'Gastos y comprobantes 🧾',p:'En cada rubro, este chip abre sus gastos: anota los gasticos del día (café, mercado...) con su monto y, si quieres, la foto del comprobante 🧾. La suma es tu gasto real del rubro. Ahí mismo ves si te acercas al tope del presupuesto (🟡/🔴). Con contraseña, todo va cifrado 🔐.'},
-    {sel:'.progress',t:'Avance del mes',p:'La barra te dice cuánto del mes ya está pago. ¡Llegar al 100% se siente bien! 🎉'}],
+    {sel:'.progress',t:'Avance del mes',p:'La barra te dice cuánto del mes ya está pago. ¡Llegar al 100% se siente bien! 🎉'},
+    {sel:'#quick-add',t:'Registro rápido ⚡',p:'Este botón + siempre a la mano anota en un toque lo del día: un gasto, un gasto hormiga 🐜, un ingreso extra, un aporte a meta o un pago de deuda — sin entrar a cada vista.'}],
   sheet:[
     {sel:'.page-head',t:'Hoja del Año 📋',p:'Tu presupuesto completo. Con 📋/🧾 cambias entre lo planeado y lo que de verdad gastaste; con + Año creas otro año.'},
     {sel:'table.sheet',t:'Edita cualquier celda',p:'Toca una celda y escribe: se guarda sola. Enter baja de fila, Tab avanza. La columna Mes queda fija al deslizar.'},
@@ -4763,7 +4782,7 @@ const VIEW_TOURS={
     {sel:'.page-head',t:'Ahorros y Proyectos 🎯',p:'Crea metas (viaje, apartamento...) con su valor y fecha objetivo.'},
     {sel:'.card',t:'Cada meta te habla',p:'Registra aportes y la app calcula cuándo llegas; si le pones rentabilidad, también cuánto te rinde.'}],
   debts:[
-    {sel:'.page-head',t:'Deudas y Créditos 💳',p:'“+ Nueva deuda” para créditos normales; “💳 + Tarjeta” para tu tarjeta y sus compras diferidas. Tip: a la tarjeta ponle su día de corte y de pago — así, al registrar una compra, la app calcula sola en qué mes empieza la primera cuota. Y a una deuda ponle su día de pago para que te avise cuando venza.'},
+    {sel:'.page-head',t:'Deudas y Créditos 💳',p:'“+ Nueva deuda” para créditos normales; “💳 + Tarjeta” para tu tarjeta y sus compras diferidas. Tip: a la tarjeta ponle su día de corte y de pago — así, al registrar una compra, la app calcula sola en qué mes empieza la primera cuota, y te avisa en Este mes cuando se acerque el pago. A una deuda ponle su día de pago para el mismo recordatorio.'},
     {sel:'.kpi-row',t:'Tu foto de deudas',p:'Cuánto debes en total, la cuota mensual combinada y cuántas deudas siguen vivas.'},
     {sel:'.card',t:'Cada deuda al detalle',p:'Registra pagos, mira la tabla de amortización y usa el simulador: “si abono X extra, ¿cuánto me ahorro?”. En tarjetas, cada compra tiene su 📊 Detalle.'}],
   invest:[
