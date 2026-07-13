@@ -293,6 +293,12 @@ table.sheet tr.total td.mname,table.sheet tr.avg td.mname{background:var(--panel
 .cupo-pill.over{color:var(--neg);background:var(--neg-soft)}
 .ci-gastos{font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:3px 9px;border-radius:20px;white-space:nowrap;cursor:pointer}
 .ci-gastos:hover{filter:brightness(1.12)}
+/* v3.9: selector de color del tema */
+.accent-sw{width:34px;height:34px;border-radius:50%;border:2px solid var(--border);cursor:pointer;padding:0;transition:.12s;display:inline-flex;align-items:center;justify-content:center;font-size:15px}
+.accent-sw:hover{transform:scale(1.12)}
+.accent-sw.sel{box-shadow:0 0 0 3px var(--surface),0 0 0 5px var(--primary)}
+.accent-custom{position:relative;overflow:hidden;background:conic-gradient(from 0deg,#EC4899,#8B5CF6,#3B82F6,#06B6D4,#6C63FF,#EC4899);color:#fff}
+.accent-custom input[type=color]{position:absolute;inset:-6px;width:calc(100% + 12px);height:calc(100% + 12px);opacity:0;cursor:pointer;border:none;padding:0}
 .rc-row{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--input);border:1px solid var(--border);border-radius:10px;margin-bottom:7px;flex-wrap:wrap}
 .rc-row .rc-name{font-weight:700;font-size:13px;flex:1;min-width:120px}
 .rc-row .rc-date{font-size:12px;color:var(--text2)}
@@ -693,9 +699,14 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='3.8';
+const APP_VERSION='3.9';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'3.9', emoji:'🎨', title:'Elige el color de tu app', items:[
+    '🎨 Color del tema: en Configuración → Perfil ahora puedes escoger el color principal de la app (botones, resaltados, enlaces).',
+    '🌈 8 colores curados que se ven bien en modo claro y oscuro — o toca “🎨 Otro color” para elegir el tuyo.',
+    '💜 Tu elección se guarda y viaja en tus backups. Por defecto sigue el lila de siempre.'
+  ]},
   {v:'3.8', emoji:'🧾', title:'Gastos y comprobantes, más organizado', items:[
     '🧾 Un solo lugar por rubro: “Gastos y comprobantes”. Anotas el gasto y, si quieres, le adjuntas el comprobante ahí mismo — ya no hay un botón aparte solo para recibos.',
     '➕ En Este mes, cada rubro tiene un botón claro “🧾 Agregar gasto” (antes era un iconito). Y puedes adjuntarle el comprobante a un gasto que ya tenías.',
@@ -4194,6 +4205,18 @@ function setTabPerfil(m){
   $('#set-usd').onchange=async e=>{ usdCfg().enabled=e.target.checked; await saveConfig(); const w=$('#set-fx-wrap'); if(w) w.style.display=e.target.checked?'':'none'; toast(e.target.checked?(fx().flag+' Modo '+fx().name+' activo: mira tu cuenta en Este mes'):'Modo moneda extranjera desactivado (tus conversiones quedan guardadas)'); };
   { const fxSel=$('#set-fx-cur'); if(fxSel) fxSel.onchange=async e=>{ usdCfg().currency=e.target.value; await saveConfig(); toast('Moneda: '+fx().name+' '+fx().flag); }; }
   $('#set-save').onclick=async()=>{ S.config.userName=$('#set-name').value; S.config.currency=$('#set-cur').value; await saveConfig(); $('#brand-user').textContent=S.config.userName; toast('Perfil guardado'); };
+  // v3.9: color del tema (personalización)
+  const acc=el('div','card'); acc.style.marginTop='16px';
+  const cur=currentAccent().toLowerCase();
+  acc.innerHTML=`<div class="card-title">Color del tema 🎨</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Elige el color principal de la app (botones, resaltados, enlaces). Todos se ven bien en claro y oscuro.</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      ${ACCENTS.map(([name,col])=>`<button class="accent-sw${cur===col.toLowerCase()?' sel':''}" data-acc="${col}" title="${name}" style="background:${col}"></button>`).join('')}
+      <label class="accent-sw accent-custom" title="Otro color a tu gusto"><input type="color" id="acc-custom" value="${/^#[0-9a-fA-F]{6}$/.test(cur)?cur:DEFAULT_ACCENT}">🎨</label>
+    </div>`;
+  m.appendChild(acc);
+  acc.querySelectorAll('[data-acc]').forEach(b=>b.onclick=async()=>{ await setAccent(b.dataset.acc); toast('Color del tema actualizado 🎨'); renderSettings(); });
+  { const ci=$('#acc-custom'); if(ci){ ci.oninput=()=>applyAccent(ci.value); ci.onchange=async()=>{ await setAccent(ci.value); toast('Color del tema actualizado 🎨'); renderSettings(); }; } }
   // v2.8: funcionalidades opcionales — apaga las vistas que no uses
   const fc=el('div','card'); fc.style.marginTop='16px';
   fc.innerHTML=`<div class="card-title">Funcionalidades ✨</div>
@@ -4490,6 +4513,7 @@ function importBackup(e){
     let imgCount=0;
     if(files){ for(const name in files){ if(name==='backup.json') continue; try{ await Store.fileWrite(name, files[name]); imgCount++; }catch(x){} } }
     await persistAll(); await loadYear(S.config.activeYear);
+    applyAccent(S.config.accent); try{ if(S.config.accent) localStorage.setItem('dfos_accent',S.config.accent); }catch(e){}
     toast('Backup importado · todo restaurado'+(imgCount?(' · '+imgCount+' comprobante(s)'):'')); setView('dashboard'); updateBrand();
   }catch(err){
     if(err && err.kind==='enc') toast('Ese backup está cifrado: abre sesión con tu contraseña primero');
@@ -4756,12 +4780,28 @@ const icoSun='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 const icoMoon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>';
 
 /* ---------- THEME ---------- */
+/* v3.9: color del tema personalizable — sobreescribe --primary en el body (gana
+   sobre :root y body.light). Presets curados que se ven bien en claro y oscuro. */
+const DEFAULT_ACCENT='#6C63FF';
+const ACCENTS=[['Lila','#6C63FF'],['Índigo','#4F46E5'],['Azul','#3B82F6'],['Cielo','#0EA5E9'],['Turquesa','#06B6D4'],['Morado','#8B5CF6'],['Fucsia','#D946EF'],['Rosa','#EC4899']];
+function currentAccent(){ if(typeof S!=='undefined' && S && S.config && S.config.accent) return S.config.accent; try{ return localStorage.getItem('dfos_accent')||DEFAULT_ACCENT; }catch(e){ return DEFAULT_ACCENT; } }
+function applyAccent(color){
+  const st=document.body && document.body.style;
+  if(!st || typeof st.setProperty!=='function') return; // DOM falso del arnés (sin estilos reales)
+  const c=color||currentAccent();
+  const soft=/^#[0-9a-fA-F]{6}$/.test(c) ? c+(document.body.classList.contains('light')?'18':'26') : c;
+  st.setProperty('--primary', c);
+  st.setProperty('--primary-soft', soft);
+  st.setProperty('--accent', c);
+}
+async function setAccent(color){ if(!color)return; if(typeof S!=='undefined' && S.config){ S.config.accent=color; await saveConfig(); } try{ localStorage.setItem('dfos_accent', color); }catch(e){} applyAccent(color); }
 function applyTheme(t, noSave){
   document.body.classList.toggle('light', t==='light');
   const ic=$('#theme-ic'), lbl=$('#theme-lbl');
   if(ic) ic.innerHTML = t==='light'? icoMoon : icoSun;
   if(lbl) lbl.textContent = t==='light'? 'Modo oscuro' : 'Modo claro';
   if(!noSave){ try{ localStorage.setItem('dfos_theme', t); }catch(e){} }
+  applyAccent(); // re-aplica el color elegido (el soft depende del tema)
 }
 function toggleTheme(){ applyTheme(document.body.classList.contains('light')?'dark':'light'); if(S.config) setView(S.view); }
 (function initTheme(){
@@ -4937,7 +4977,7 @@ async function bootData(){
 function startApp(){
   $('#welcome').classList.add('hide');
   $('#app').classList.remove('hide');
-  updateBrand(); updateStoragePill(); applyHiddenViews();
+  updateBrand(); updateStoragePill(); applyHiddenViews(); applyAccent(S.config.accent);
   document.querySelectorAll('.nav-item').forEach(n=> n.dataset.view && (n.onclick=()=>setView(n.dataset.view)) );
   setView('dashboard');
   backupReminder();
