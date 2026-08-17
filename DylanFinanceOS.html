@@ -699,9 +699,16 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='4.3';
+const APP_VERSION='4.4';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'4.4', emoji:'📉', title:'El dinero de tus metas gastadas se ve en su mes', items:[
+    '📅 Al marcar una meta como “Completada y gastada”, ahora eliges en qué mes la gastaste (por defecto, el mes actual).',
+    '🏠 En “Este mes” de ese mes aparece una tarjeta “🏁 Ahorros que gastaste este mes” con la meta y el monto — para que quede claro que ahí usaste tus ahorros.',
+    '📉 Tu patrimonio neto ya no “borra” esa plata del pasado: la cuenta como ahorro hasta el mes en que la gastaste y baja justo ese mes (se ve el escalón en la evolución).',
+    '📊 Gráfica nueva en Gráficas: “Ahorros que gastaste por mes”, para ver cuándo usaste tus metas a lo largo del año.',
+    'ℹ️ Ese dinero no se suma a los gastos de tu presupuesto del mes: ya lo habías apartado aportando poco a poco. Lo que cambia es tu patrimonio, no tu “te queda”.'
+  ]},
   {v:'4.3', emoji:'🏁', title:'Metas cumplidas y gastadas: archívalas en tu historial', items:[
     '🏁 Cuando una meta llega al 100%, aparece un botón “Completada y gastada”. Úsalo cuando ya cumpliste el objetivo Y gastaste esa plata (por ejemplo, ya hiciste el viaje).',
     '📉 Al archivarla, ese dinero deja de contar como ahorro y en tu patrimonio (porque ya lo usaste), y la meta pasa a tu historial de “Completadas y gastadas”.',
@@ -1335,7 +1342,12 @@ function debtBalanceAt(d, y, m){
 function savedUpTo(y, m){
   let t=0;
   (S.savings.projects||[]).forEach(p=>{
-    if(p.archived) return; // v4.3: meta ya gastada, no cuenta como activo
+    if(p.archived){
+      // v4.4: la meta gastada cuenta como ahorro HASTA el mes en que la gastaste; desde ese mes, ya no
+      // (m es 1-based, igual que spentMonth). Sin mes de gasto (archivada en v4.3) → no cuenta nunca.
+      if(p.spentYear==null || p.spentMonth==null) return;
+      if(y>p.spentYear || (y===p.spentYear && m>=p.spentMonth)) return;
+    }
     t+=(p.current||0);
     (p.contributions||[]).forEach(c=>{ if(c.year<y || (c.year===y && c.month<=m)) t+=c.amount; });
   });
@@ -1431,6 +1443,10 @@ function savedSoFar(proj){ return (proj.contributions||[]).reduce((s,c)=>s+c.amo
 function projArchived(p){ return !!(p&&p.archived); }
 function activeProjects(){ return (S.savings.projects||[]).filter(p=>!p.archived); }
 function archivedProjects(){ return (S.savings.projects||[]).filter(p=>p.archived); }
+// v4.4: monto que se gastó de una meta archivada (snapshot al archivar; fallback a lo ahorrado)
+function projSpentAmount(p){ return p.spentAmount!=null? p.spentAmount : savedSoFar(p); }
+// metas archivadas gastadas en un mes concreto (y = año, mi0 = índice de mes 0-based)
+function metasSpentIn(y, mi0){ return (S.savings.projects||[]).filter(p=>p.archived && p.spentYear===y && p.spentMonth===mi0+1); }
 // Proyección con rentabilidad (interés compuesto mensual)
 function savMonthlyRate(ratePct){ return ratePct>0? Math.pow(1+ratePct/100,1/12)-1 : 0; }
 function projWithRate(current, monthly, goal, ratePct, startM, startY){
@@ -2171,6 +2187,21 @@ function renderMonth(cm){
     body.appendChild(vb);
   }
 
+  // v4.4: ahorros de metas que gastaste en el mes seleccionado (registro, no gasto de presupuesto)
+  const spentMetas=metasSpentIn(S.config.activeYear, cm);
+  if(spentMetas.length){
+    const totSpent=spentMetas.reduce((a,p)=>a+projSpentAmount(p),0);
+    const sc=el('div','card'); sc.style.marginBottom='16px';
+    sc.innerHTML=`<div class="card-title">🏁 Ahorros que gastaste este mes</div>
+      ${spentMetas.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <span class="ci-swatch" style="background:${p.color}"></span>
+        <span style="flex:1;font-size:13.5px">${esc(p.name)}</span>
+        <span style="font-weight:700;font-size:13px">${COP(projSpentAmount(p))}</span></div>`).join('')}
+      ${spentMetas.length>1?`<div style="display:flex;justify-content:space-between;padding-top:9px;font-weight:800"><span>Total</span><span>${COP(totSpent)}</span></div>`:''}
+      <div class="help" style="margin-top:10px;margin-bottom:0">${icoInfo}<div>Esta plata salió de tus metas, por eso tu <b>patrimonio baja este mes</b>. No cuenta como gasto de tu presupuesto (ya la habías apartado aportando mes a mes). Puedes reactivar la meta en <b>Ahorros</b>.</div></div>`;
+    body.appendChild(sc);
+  }
+
   // v2.9: cierre de mes guiado — al arrancar mes nuevo, cerrar el anterior en 1 minuto
   if(S.config.activeYear===todayYear() && cm===todayMonth() && cm>0){
     const prev=cm-1, pm=S.year.months[prev];
@@ -2745,10 +2776,11 @@ function renderSavings(){
     const hc=el('div','card'); hc.style.marginTop='18px';
     hc.innerHTML=`<div class="card-title">🏁 Completadas y gastadas</div>
       <div style="font-size:12.5px;color:var(--text2);margin:-4px 0 10px">Metas que ya cumpliste y cuyo dinero ya usaste. No cuentan en tus ahorros ni en tu patrimonio.</div>`;
-    arch.slice().sort((a,b)=> String(b.archivedAt||'').localeCompare(String(a.archivedAt||''))).forEach(p=>{
+    arch.slice().sort((a,b)=> ((b.spentYear||0)*12+(b.spentMonth||0))-((a.spentYear||0)*12+(a.spentMonth||0)) || String(b.archivedAt||'').localeCompare(String(a.archivedAt||''))).forEach(p=>{
+      const cuando = (p.spentMonth&&p.spentYear)? 'gastada · '+MONTH_NAMES[p.spentMonth-1]+' '+p.spentYear : 'gastada';
       const row=el('div','lrow'); row.style.cssText='padding:10px 13px;margin-bottom:7px;align-items:center';
       row.innerHTML=`<span class="lname" style="display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:3px;background:${p.color};display:inline-block"></span>${esc(p.name)}</span>
-        <span class="lmeta" style="text-align:right;line-height:1.35">${COP(p.goal)}<br><span style="font-size:11px;color:var(--text3)">${p.archivedAt?'gastada · '+p.archivedAt:'gastada'}</span></span>
+        <span class="lmeta" style="text-align:right;line-height:1.35">${COP(projSpentAmount(p))}<br><span style="font-size:11px;color:var(--text3)">${cuando}</span></span>
         <span style="display:flex;gap:6px;margin-left:8px">
           <button class="btn sm" title="Reactivar" onclick="unarchiveProj('${p.id}')">↩️ Reactivar</button>
           <button class="btn sm icon danger" title="Eliminar" onclick="delProj('${p.id}')">${icoTrash}</button>
@@ -2912,15 +2944,29 @@ function projModal(id){
     await saveSavings(); closeModal(); renderSavings();
   };
 }
-// v4.3: "Completada y gastada" — la meta pasa al historial y su dinero deja de contar
+// v4.3/4.4: "Completada y gastada" — la meta pasa al historial; eliges en qué mes la gastaste
+// y su dinero deja de contar como ahorro desde ese mes (el patrimonio baja ese mes).
 window.archiveProj=(id)=>{ const p=S.savings.projects.find(x=>x.id===id); if(!p)return;
-  confirmModal('¿Ya la cumpliste y gastaste?','“'+esc(p.name)+'” pasará a tu historial de metas completadas y gastadas. Ese dinero dejará de contar como ahorro y en tu patrimonio (porque ya lo usaste). Podrás reactivarla cuando quieras.', async()=>{
-    p.archived=true; p.archivedAt=new Date().toISOString().slice(0,10); await saveSavings(); renderSavings();
-    toast('“'+p.name+'” archivada 🏁', async()=>{ p.archived=false; delete p.archivedAt; await saveSavings(); renderSavings(); });
-  }, '🏁 Sí, ya la gasté');
+  const dm=todayMonth(), dy=S.config.activeYear;
+  openModal(`<h2>¿Ya la cumpliste y gastaste? 🏁</h2>
+    <div class="msub">“${esc(p.name)}” pasará a tu historial de metas completadas y gastadas. Dime en qué mes gastaste los ${COP(savedSoFar(p))}: ese dinero dejará de contar como ahorro desde ese mes y tu patrimonio bajará ahí (no antes).</div>
+    <div class="form-grid">
+      <div class="field"><label>¿En qué mes lo gastaste?</label><select id="ar-m">${MONTH_NAMES.map((n,i)=>`<option value="${i+1}" ${i===dm?'selected':''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label>Año</label><input id="ar-y" type="number" value="${dy}"></div>
+    </div>
+    <div class="help" style="margin-top:2px">${icoInfo}<div>No se suma a los gastos de tu presupuesto: esa plata ya la habías apartado aportando mes a mes. Lo que cambia es tu patrimonio. Podrás reactivarla cuando quieras.</div></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn pos" id="ar-ok">🏁 Sí, ya la gasté</button></div>`);
+  $('#ar-ok').onclick=async()=>{
+    p.archived=true; p.spentMonth=+$('#ar-m').value; p.spentYear=+$('#ar-y').value;
+    p.spentAmount=savedSoFar(p); p.archivedAt=new Date().toISOString().slice(0,10);
+    await saveSavings(); closeModal(); renderSavings();
+    toast('“'+p.name+'” archivada 🏁 · gastada en '+MONTH_NAMES[p.spentMonth-1]+' '+p.spentYear, async()=>{
+      p.archived=false; delete p.spentMonth; delete p.spentYear; delete p.spentAmount; delete p.archivedAt; await saveSavings(); renderSavings(); });
+  };
 };
 window.unarchiveProj=async(id)=>{ const p=S.savings.projects.find(x=>x.id===id); if(!p)return;
-  p.archived=false; delete p.archivedAt; await saveSavings(); renderSavings(); toast('“'+p.name+'” reactivada ↩️'); };
+  p.archived=false; delete p.spentMonth; delete p.spentYear; delete p.spentAmount; delete p.archivedAt;
+  await saveSavings(); renderSavings(); toast('“'+p.name+'” reactivada ↩️'); };
 window.delProj=(id)=>{ const p=S.savings.projects.find(x=>x.id===id); if(!p)return; confirmModal('¿Eliminar proyecto?','Se borrará "'+esc(p.name)+'" y todos sus aportes registrados.', async()=>{ const idx=S.savings.projects.findIndex(x=>x.id===id); const snap=S.savings.projects[idx]; S.savings.projects.splice(idx,1); await saveSavings(); renderSavings(); toast('Proyecto "'+snap.name+'" eliminado', async()=>{ S.savings.projects.splice(idx,0,snap); await saveSavings(); renderSavings(); }); }); };
 window.contribModal=(id)=>{
   const p=S.savings.projects.find(x=>x.id===id);
@@ -4157,6 +4203,9 @@ function renderCharts(){
   // v3.7: en qué se va la plata (gastos hormiga por rubro, año) — solo si hay pagos
   const hormTotalYear = activeRubros().reduce((a,r)=>a+S.year.months.reduce((s,mm)=>s+rubroItems(mm,r.id).reduce((x,it)=>x+(it.amount||0),0),0),0);
   if(hormTotalYear>0) grid.appendChild(chartCard('¿En qué se te va la plata? 🐜','Tus gastos hormiga por rubro en el año','c7'));
+  // v4.4: ahorros de metas que gastaste, mes a mes (solo si hay alguna gastada este año)
+  const spentThisYear=(S.savings.projects||[]).some(p=>p.archived && p.spentYear===S.config.activeYear && p.spentMonth);
+  if(spentThisYear) grid.appendChild(chartCard('🏁 Ahorros que gastaste por mes','Cuándo usaste tus metas cumplidas','c8'));
 
   setTimeout(()=>{ drawAllCharts(); bindChartDownloads(m); },30);
 }
@@ -4218,6 +4267,13 @@ function drawAllCharts(){
     const hr=activeRubros().map(r=>({name:r.name,color:r.color,total:S.year.months.reduce((a,mm)=>a+rubroItems(mm,r.id).reduce((s,it)=>s+(it.amount||0),0),0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
     CHARTS.push(new Chart($('#c7'),{type:'bar',data:{labels:hr.map(x=>x.name),datasets:[{label:'Gasto hormiga',data:hr.map(x=>x.total),backgroundColor:hr.map(x=>x.color),borderRadius:4}]},
       options:{...chartOpts(),indexAxis:'y',plugins:{legend:{display:false},tooltip:tt()}}}));
+  }
+  // C8 (v4.4): ahorros de metas gastadas por mes del año activo
+  if($('#c8')){
+    const y=S.config.activeYear; const byMonth=new Array(12).fill(0);
+    (S.savings.projects||[]).forEach(p=>{ if(p.archived && p.spentYear===y && p.spentMonth) byMonth[p.spentMonth-1]+=projSpentAmount(p); });
+    CHARTS.push(new Chart($('#c8'),{type:'bar',data:{labels,datasets:[{label:'Ahorros gastados',data:byMonth,backgroundColor:'#00D4AA',borderRadius:5,maxBarThickness:22}]},
+      options:{...chartOpts(),plugins:{legend:{display:false},tooltip:tt()}}}));
   }
 }
 
