@@ -699,9 +699,14 @@ const moneyNum = v => { if(v==null)return null; const s=String(v).replace(/[^\d]
 const todayMonth = ()=> new Date().getMonth(); // 0-11
 const todayYear = ()=> new Date().getFullYear();
 const DATA_VERSION = 1;
-const APP_VERSION='4.2';
+const APP_VERSION='4.3';
 /* Historial de versiones (se muestra en Configuración → Novedades) */
 const CHANGELOG=[
+  {v:'4.3', emoji:'🏁', title:'Metas cumplidas y gastadas: archívalas en tu historial', items:[
+    '🏁 Cuando una meta llega al 100%, aparece un botón “Completada y gastada”. Úsalo cuando ya cumpliste el objetivo Y gastaste esa plata (por ejemplo, ya hiciste el viaje).',
+    '📉 Al archivarla, ese dinero deja de contar como ahorro y en tu patrimonio (porque ya lo usaste), y la meta pasa a tu historial de “Completadas y gastadas”.',
+    '↩️ ¿Te equivocaste? Desde el historial puedes reactivar la meta o eliminarla; nada se pierde sin que tú decidas.'
+  ]},
   {v:'4.2', emoji:'⏰', title:'Recordatorio de pago de la tarjeta y tutoriales al día', items:[
     '⏰ Si tu tarjeta tiene día de pago, ahora también te aparece en “Próximos vencimientos” de Este mes — igual que los rubros y las deudas.',
     '📚 Repasé y actualicé las guías de toda la app para que todo quede bien explicado: las dos formas de registrar gastos, el botón ⚡ de registro rápido, el color del tema y las fechas de corte/pago.'
@@ -1330,6 +1335,7 @@ function debtBalanceAt(d, y, m){
 function savedUpTo(y, m){
   let t=0;
   (S.savings.projects||[]).forEach(p=>{
+    if(p.archived) return; // v4.3: meta ya gastada, no cuenta como activo
     t+=(p.current||0);
     (p.contributions||[]).forEach(c=>{ if(c.year<y || (c.year===y && c.month<=m)) t+=c.amount; });
   });
@@ -1386,7 +1392,7 @@ async function fetchTRM(){
 function patrimonioParts(){
   const bi=lastRealBankIdx();
   const banco= bi>=0 ? S.year.months[bi].bankBalance : null;
-  const metas=(S.savings.projects||[]).reduce((s,p)=>s+savedSoFar(p),0);
+  const metas=(S.savings.projects||[]).reduce((s,p)=>s+(p.archived?0:savedSoFar(p)),0);
   const invertido=patrimonioInvertido();
   const usd=usdOn()? usdCop() : 0; // foto: saldo USD a la TRM vigente
   const prestamos=(S.debts.loans||[]).reduce((s,l)=>s+debtPaidInterest(l).balance,0); // por cobrar
@@ -1421,6 +1427,10 @@ function savingsProjection(current, monthly, goal, startM, startY){
   return {reachMonth:mi+1,reachYear:yr,monthsLeft};
 }
 function savedSoFar(proj){ return (proj.contributions||[]).reduce((s,c)=>s+c.amount,0)+ (proj.current||0); }
+// v4.3: metas "completadas y gastadas" → archivadas: ya no cuentan como ahorro/patrimonio actual
+function projArchived(p){ return !!(p&&p.archived); }
+function activeProjects(){ return (S.savings.projects||[]).filter(p=>!p.archived); }
+function archivedProjects(){ return (S.savings.projects||[]).filter(p=>p.archived); }
 // Proyección con rentabilidad (interés compuesto mensual)
 function savMonthlyRate(ratePct){ return ratePct>0? Math.pow(1+ratePct/100,1/12)-1 : 0; }
 function projWithRate(current, monthly, goal, ratePct, startM, startY){
@@ -1589,7 +1599,7 @@ function financialHealth(){
   const ingMes = mesesConIng? ingAnual/mesesConIng : 0;
   const gasMes = gasAnual/12;
   const cuotaDeuda=S.debts.debts.filter(d=>debtPaidInterest(d).balance>1).reduce((a,d)=>a+(d.monthlyPayment||0),0);
-  const ahorrado=(S.savings.projects||[]).reduce((a,p)=>a+savedSoFar(p),0);
+  const ahorrado=(S.savings.projects||[]).reduce((a,p)=>a+(p.archived?0:savedSoFar(p)),0);
   const parts=[];
   if(ingAnual>0){ const rate=ahoAnual/ingAnual; parts.push({k:'Tasa de ahorro', v:(rate*100).toFixed(0)+'%', s:Math.max(0,Math.min(100, rate/0.20*100)), good:rate>=0.15}); }
   if(ingMes>0){ const b=cuotaDeuda/ingMes; parts.push({k:'Deudas vs ingreso', v:(b*100).toFixed(0)+'%', s:Math.max(0,Math.min(100, 100-(b/0.36*100))), good:b<=0.30}); }
@@ -1626,7 +1636,7 @@ function buildPrintReport(){
       <table style="width:100%;border-collapse:collapse;margin-bottom:18px"><tr><th ${th}>Rubro</th><th ${th} style="text-align:right;padding:6px 10px;border-bottom:2px solid #000;font-size:12px">Total ${yr}</th></tr>
       ${rubros.map(r=>`<tr><td ${td}>${esc(r.name)}</td><td ${tdr}>${COP(r.t)}</td></tr>`).join('')}</table>`;
   }
-  const metas=(S.savings.projects||[]);
+  const metas=(S.savings.projects||[]).filter(p=>!p.archived);
   if(metas.length){
     html+=`<h2 style="font-size:15px;border-bottom:2px solid #000;padding-bottom:4px">Metas de ahorro</h2>
       <table style="width:100%;border-collapse:collapse;margin-bottom:18px"><tr><th ${th}>Meta</th><th ${th} style="text-align:right;padding:6px 10px;border-bottom:2px solid #000;font-size:12px">Ahorrado / Meta</th></tr>
@@ -2207,7 +2217,7 @@ function renderMonth(cm){
   const yr0=S.config.activeYear;
   const items=[];
   rubros.forEach(r=> items.push({kind:'rubro',id:r.id,name:r.name,tag:r.type,color:r.color,amount:rubroAmount(md,r,mode),done:isPaid(md,r.id)}));
-  S.savings.projects.forEach(p=>{ const done=savingsDoneThisMonth(p,yr0,cm); const recorded=(p.contributions||[]).filter(c=>c.year===yr0&&c.month===cm+1).reduce((a,c)=>a+c.amount,0);
+  S.savings.projects.forEach(p=>{ if(p.archived)return; const done=savingsDoneThisMonth(p,yr0,cm); const recorded=(p.contributions||[]).filter(c=>c.year===yr0&&c.month===cm+1).reduce((a,c)=>a+c.amount,0);
     const falta=Math.max(0,p.goal-savedSoFar(p)); // v2.9: cuánto le falta a la meta, no solo el aporte
     items.push({kind:'saving',id:p.id,name:'Ahorro · '+p.name,tag:falta<=0?'¡completa! 🎉':'falta '+COPk(falta),color:p.color,amount:done?recorded:(p.monthlyPlan||0),done}); });
   S.debts.debts.filter(d=>debtPaidInterest(d).balance>1 || debtDoneThisMonth(d,yr0,cm)).forEach(d=>{ const done=debtDoneThisMonth(d,yr0,cm); const recorded=(d.payments||[]).filter(p=>p.year===yr0&&p.month===cm+1).reduce((a,p)=>a+p.amount,0);
@@ -2259,8 +2269,8 @@ function renderMonth(cm){
   // mini metas + deudas
   const two=el('div','cols-2'); two.style.marginTop='20px';
   const mc=el('div','card'); mc.innerHTML='<div class="card-title">Metas de ahorro</div>';
-  if(!S.savings.projects.length) mc.innerHTML+='<div style="color:var(--text2);font-size:13px">Crea metas en “Ahorros”.</div>';
-  S.savings.projects.forEach(p=>{ const saved=savedSoFar(p); const pc=Math.min(100,saved/p.goal*100);
+  if(!activeProjects().length) mc.innerHTML+='<div style="color:var(--text2);font-size:13px">Crea metas en “Ahorros”.</div>';
+  activeProjects().forEach(p=>{ const saved=savedSoFar(p); const pc=Math.min(100,saved/p.goal*100);
     mc.innerHTML+=`<div style="margin:13px 0"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600"><span>${esc(p.name)}</span><span style="color:var(--text2)">${COPk(saved)} / ${COPk(p.goal)}</span></div><div class="progress"><div class="fill" style="width:${pc}%;background:${p.color}"></div></div></div>`; });
   two.appendChild(mc);
   const dc=el('div','card'); dc.innerHTML='<div class="card-title">Deudas</div>';
@@ -2714,15 +2724,39 @@ function renderSavings(){
       `<button class="btn primary" onclick="projModal()">🎯 Crear mi primera meta</button>`));
     return;
   }
-  const grid=el('div','proj-grid'); m.appendChild(grid);
-  // v2.9: metas en curso primero, completadas al final
-  S.savings.projects.slice().sort((a,b)=> (savedSoFar(a)>=a.goal?1:0)-(savedSoFar(b)>=b.goal?1:0)).forEach(p=> grid.appendChild(projCard(p)) );
+  const active=activeProjects();
+  if(active.length){
+    const grid=el('div','proj-grid'); m.appendChild(grid);
+    // v2.9: metas en curso primero, completadas al final
+    active.slice().sort((a,b)=> (savedSoFar(a)>=a.goal?1:0)-(savedSoFar(b)>=b.goal?1:0)).forEach(p=> grid.appendChild(projCard(p)) );
 
-  // consolidated chart
-  const cc=el('div','card'); cc.style.marginTop='18px';
-  cc.innerHTML='<div class="card-title">Proyección de ahorros hacia la meta</div><div class="chart-box tall"><canvas id="savChart"></canvas></div>';
-  m.appendChild(cc);
-  drawSavingsChart();
+    // consolidated chart
+    const cc=el('div','card'); cc.style.marginTop='18px';
+    cc.innerHTML='<div class="card-title">Proyección de ahorros hacia la meta</div><div class="chart-box tall"><canvas id="savChart"></canvas></div>';
+    m.appendChild(cc);
+    drawSavingsChart();
+  } else {
+    m.appendChild(el('div','card','<div style="color:var(--text2);font-size:13.5px;text-align:center;padding:12px">Todas tus metas están en el historial de completadas y gastadas. Crea una nueva con <b>+ Nuevo proyecto</b> 🎯</div>'));
+  }
+
+  // v4.3: historial de metas cumplidas y ya gastadas
+  const arch=archivedProjects();
+  if(arch.length){
+    const hc=el('div','card'); hc.style.marginTop='18px';
+    hc.innerHTML=`<div class="card-title">🏁 Completadas y gastadas</div>
+      <div style="font-size:12.5px;color:var(--text2);margin:-4px 0 10px">Metas que ya cumpliste y cuyo dinero ya usaste. No cuentan en tus ahorros ni en tu patrimonio.</div>`;
+    arch.slice().sort((a,b)=> String(b.archivedAt||'').localeCompare(String(a.archivedAt||''))).forEach(p=>{
+      const row=el('div','lrow'); row.style.cssText='padding:10px 13px;margin-bottom:7px;align-items:center';
+      row.innerHTML=`<span class="lname" style="display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:3px;background:${p.color};display:inline-block"></span>${esc(p.name)}</span>
+        <span class="lmeta" style="text-align:right;line-height:1.35">${COP(p.goal)}<br><span style="font-size:11px;color:var(--text3)">${p.archivedAt?'gastada · '+p.archivedAt:'gastada'}</span></span>
+        <span style="display:flex;gap:6px;margin-left:8px">
+          <button class="btn sm" title="Reactivar" onclick="unarchiveProj('${p.id}')">↩️ Reactivar</button>
+          <button class="btn sm icon danger" title="Eliminar" onclick="delProj('${p.id}')">${icoTrash}</button>
+        </span>`;
+      hc.appendChild(row);
+    });
+    m.appendChild(hc);
+  }
 }
 function projCard(p){
   const saved=savedSoFar(p); const pct=Math.min(100,saved/p.goal*100);
@@ -2752,7 +2786,8 @@ function projCard(p){
       <div style="margin-top:9px;text-align:center"><a href="#" id="tbl-${p.id}" style="color:var(--primary);font-size:12.5px;font-weight:700">📊 Ver la tabla mes a mes</a></div>
       <div style="font-size:10.5px;color:var(--text3);margin-top:4px">*sobrante promedio menos este aporte y deudas activas${hasRate?'. Proyección con interés compuesto.':''} Mover el simulador <b>no cambia tu plan</b>: cámbialo con ${'✏️'} o adoptándolo aquí.</div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:12px">
+    ${done?`<button class="btn pos" style="width:100%;justify-content:center;margin-top:12px" onclick="archiveProj('${p.id}')">🏁 Completada y gastada — archivar</button>`:''}
+    <div style="display:flex;gap:8px;margin-top:${done?'8px':'12px'}">
       <button class="btn sm" style="flex:1" onclick="contribModal('${p.id}')">+ Registrar aporte</button>
       <button class="btn sm icon" onclick="projModal('${p.id}')">${icoEdit}</button>
       <button class="btn sm icon danger" onclick="delProj('${p.id}')">${icoTrash}</button>
@@ -2847,13 +2882,13 @@ window.savingsDetail=(id, aporte)=>{
 function drawSavingsChart(){
   const labels=[]; const start=todayMonth(); 
   for(let k=0;k<14;k++){ const mi=(start+k)%12; const yr=S.config.activeYear+Math.floor((start+k)/12); labels.push(MONTH_NAMES[mi].slice(0,3)+(yr!==S.config.activeYear?" '"+String(yr).slice(2):'')); }
-  const ds=S.savings.projects.map(p=>{
+  const ds=activeProjects().map(p=>{
     const r=savMonthlyRate(p.rate||0); const data=[]; let acc=savedSoFar(p);
     for(let k=0;k<14;k++){ data.push(Math.min(acc,p.goal)); acc=acc*(1+r)+p.monthlyPlan; }
     return {label:p.name,data,borderColor:p.color,backgroundColor:p.color+'22',borderWidth:2.5,tension:.3,pointRadius:0,fill:false};
   });
   // goal lines as datasets
-  S.savings.projects.forEach(p=> ds.push({label:p.name+' (meta)',data:labels.map(()=>p.goal),borderColor:p.color,borderDash:[5,5],borderWidth:1,pointRadius:0,fill:false}));
+  activeProjects().forEach(p=> ds.push({label:p.name+' (meta)',data:labels.map(()=>p.goal),borderColor:p.color,borderDash:[5,5],borderWidth:1,pointRadius:0,fill:false}));
   CHARTS.push(new Chart($('#savChart'),{type:'line',data:{labels,datasets:ds},options:chartOpts()}));
 }
 function projModal(id){
@@ -2877,6 +2912,15 @@ function projModal(id){
     await saveSavings(); closeModal(); renderSavings();
   };
 }
+// v4.3: "Completada y gastada" — la meta pasa al historial y su dinero deja de contar
+window.archiveProj=(id)=>{ const p=S.savings.projects.find(x=>x.id===id); if(!p)return;
+  confirmModal('¿Ya la cumpliste y gastaste?','“'+esc(p.name)+'” pasará a tu historial de metas completadas y gastadas. Ese dinero dejará de contar como ahorro y en tu patrimonio (porque ya lo usaste). Podrás reactivarla cuando quieras.', async()=>{
+    p.archived=true; p.archivedAt=new Date().toISOString().slice(0,10); await saveSavings(); renderSavings();
+    toast('“'+p.name+'” archivada 🏁', async()=>{ p.archived=false; delete p.archivedAt; await saveSavings(); renderSavings(); });
+  }, '🏁 Sí, ya la gasté');
+};
+window.unarchiveProj=async(id)=>{ const p=S.savings.projects.find(x=>x.id===id); if(!p)return;
+  p.archived=false; delete p.archivedAt; await saveSavings(); renderSavings(); toast('“'+p.name+'” reactivada ↩️'); };
 window.delProj=(id)=>{ const p=S.savings.projects.find(x=>x.id===id); if(!p)return; confirmModal('¿Eliminar proyecto?','Se borrará "'+esc(p.name)+'" y todos sus aportes registrados.', async()=>{ const idx=S.savings.projects.findIndex(x=>x.id===id); const snap=S.savings.projects[idx]; S.savings.projects.splice(idx,1); await saveSavings(); renderSavings(); toast('Proyecto "'+snap.name+'" eliminado', async()=>{ S.savings.projects.splice(idx,0,snap); await saveSavings(); renderSavings(); }); }); };
 window.contribModal=(id)=>{
   const p=S.savings.projects.find(x=>x.id===id);
@@ -4160,7 +4204,7 @@ function drawAllCharts(){
     {label:'Gasto año',data:rb.map(x=>x.total),backgroundColor:rb.map(x=>x.color),borderRadius:4}]},
     options:{...chartOpts(),indexAxis:'y',plugins:{legend:{display:false},tooltip:tt()}}}));
   // C5 metas
-  const sav=S.savings.projects;
+  const sav=activeProjects();
   CHARTS.push(new Chart($('#c5'),{type:'bar',data:{labels:sav.map(p=>p.name),datasets:[
     {label:'Ahorrado',data:sav.map(p=>savedSoFar(p)),backgroundColor:'#00D4AA',borderRadius:4},
     {label:'Falta',data:sav.map(p=>Math.max(0,p.goal-savedSoFar(p))),backgroundColor:gridCol(),borderRadius:4}]},
